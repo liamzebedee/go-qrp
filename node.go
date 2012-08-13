@@ -261,25 +261,26 @@ func (node *Node) Call(procedure string, addrString string, args interface{}, re
 	node.pendingMutex.Unlock()
 	
 	// If timeout isn't 0, initate the timeout function in another thread
+	timeoutChan := make(chan bool, 1)
 	if timeout > 0 {
 		go func(){
 			// Timeout function
 			time.Sleep(time.Duration(timeout) * time.Second)
-			*node.pending[call] <- nil
+			timeoutChan <- true
 		}()
 	}
 	
 	// Wait for response on channel
-	qreply := <-*node.pending[call]
-	fmt.Printf("%s", qreply)
-	
-	if qreply != nil { // If we get a response from the node
+	select {
+    case qreply := <-*node.pending[call]:
+		// We received a reply
 		reply = qreply
-		return nil
-	} else { // Else if we timed out
+    	fmt.Printf("%s", qreply)
+    case <-timeoutChan:
+    	// We timed out
 		return new(TimeoutError)
-	}
-	
+    }
+    
 	return nil
 }
 
