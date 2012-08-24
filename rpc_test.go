@@ -50,7 +50,7 @@ func Test_Single(*testing.T) {
 	
 	args := AddArgs { 2, 2 }
 	reply := new(AddReply)
-	err = client.Call("Add", "127.0.0.1:50000", args, reply, 3)
+	err = client.CallUDP("Add", "127.0.0.1:50000", args, reply, 3)
 	println("Calling Add on server")
 	if err != nil {
 		println("Client call error")

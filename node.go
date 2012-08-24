@@ -6,7 +6,7 @@ package qrp
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/liamzebedee/go-BEncode" // BEncode
+	"github.com/liamzebedee/bencode/src/bencode" // BEncode
 	"net"
 	"sync"
 	"reflect"
@@ -86,7 +86,7 @@ func (node *Node) ListenAndServe() (err error) {
 		// any implementation must support. For IPv4, this is 576 bytes. IPv6 raises this to 1,500 bytes 
 		// ~ UNIX Network Programming, Volume 2, Second Edition: Interprocess Communication
 		
-		buffer := make([]byte, 0, node.connectionMTU)
+		buffer := make([]byte, node.connectionMTU, node.connectionMTU)
 
 		// Read a packet into the buffer
 		bytesRead, fromAddr, err := node.connection.ReadFrom(buffer)
@@ -97,9 +97,6 @@ func (node *Node) ListenAndServe() (err error) {
 		
 		// If we read a packet
 		if bytesRead > 0 {
-			print("Packet from ")
-			print(fromAddr)
-			println(" YAY")
 			// Process packet
 			go func() {
 				err := node.processPacket(&buffer, bytesRead, fromAddr)
@@ -114,22 +111,22 @@ func (node *Node) ListenAndServe() (err error) {
 }
 
 // Processes received packets
-func (Node *Node) processPacket(data *[]byte, n int, addr net.Addr) (error) {
-	var buf_bigEndian []byte
-	
-	// Decode into Big Endian format
-	buf := bytes.NewBuffer(*data)
-	err := binary.Read(buf, binary.BigEndian, &buf_bigEndian)
-	if(err != nil) {
+func (Node *Node) processPacket(data *[]byte, read int, addr net.Addr) (error) {	
+	// Decode data into Big Endian encoding
+	data_bigEndian := make([]byte, len(*data))
+	err := binary.Read(bytes.NewBuffer(*data), binary.BigEndian, data_bigEndian)
+	if err != nil {
+		fmt.Println("binary.Read failed, couldn't read packet into BigEndian:", err)
 		return err
 	}
 	
-	// Unmarshal buffer
+	fmt.Printf("%s\n", data_bigEndian)
+	
+	// Unmarshal BigEndian BEncode into struct
+	bencodeD := bencode.NewDecoder(bytes.NewBuffer(data_bigEndian))
 	var message Message
-	decodeBuf := bytes.NewBuffer(buf_bigEndian)
-	err = bencode.Unmarshal(decodeBuf, &message)
-	if err != nil {
-		return err
+	if err := bencodeD.Decode(&message); err != nil {
+		//return err
 	}
 	
 	// Further processing
@@ -138,12 +135,13 @@ func (Node *Node) processPacket(data *[]byte, n int, addr net.Addr) (error) {
 
 // Processes raw messages
 func (Node *Node) processMessage(message *Message, addr net.Addr) (error) {
+	fmt.Printf("MSGSTRUCT: %s\n", *message)
 	if query := message.Query; query != nil {
 		// Query
-		return Node.processQuery(query.(*Query), addr)
+		return Node.processQuery(query, addr)
 	} else if reply := message.Reply; reply != nil {
 		// Reply
-		return Node.processReply(reply.(*Reply), addr)
+		return Node.processReply(reply, addr)
 	} else {
 		return new(InvalidMessageError)
 	}
@@ -157,14 +155,15 @@ func (Node *Node) processQuery(query *Query, addr net.Addr) (error) {
 		method := procedure.Method
 		function := method.Func
 		
+		print("QUERY: ", procedureName, "\n")
+		print("QUERY: ", query.ProcedureData[0], "\n")
+		
 		// Initialize values
 		argValue, replyValue := reflect.New(procedure.ArgType.Elem()), reflect.New(procedure.ReplyType.Elem())	
 		
+		v := reflect.ValueOf(query.ProcedureData[0])
 		// Set value of arg
-		argValue.Set(reflect.ValueOf(query.ProcedureData))
-		
-		print("QUERY: ")
-		println(query.ProcedureName)
+		argValue.Set(v)
 		
 		// Invoke the function
 		function.Call([]reflect.Value{procedure.Receiver, argValue, replyValue})
@@ -213,30 +212,40 @@ func (node *Node) nextCall(addr net.Addr) (nextCall call) {
 	return nextCall
 }
 
-// Tries to call 'procedure' on remote node, with supplied 'args' and allocated return values 'reply'. 
-// 'timeout' can be used to specify a maximum time to wait for a reply (in seconds). If timeout is 0, we wait forever. 
-// The reliability of this completing successfully is dependent on the network protocol (UDP is unreliable)
-// Returns an error if there is a timeout
-func (node *Node) Call(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
-	addr, err := net.ResolveIPAddr("ip", addrString)
-	
+func (node *Node) CallUDP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
+	addr, err := net.ResolveUDPAddr("ip", addrString)
 	if err != nil {
 		return err
 	}
 	
+	return node.Call(procedure, addr, args, reply, timeout)
+}
+
+// Tries to call 'procedure' on remote node, with supplied 'args' and allocated return values 'reply'. 
+// 'timeout' can be used to specify a maximum time to wait for a reply (in seconds). If timeout is 0, we wait forever. 
+// The reliability of this completing successfully is dependent on the network protocol (UDP is unreliable)
+// Returns an error if there is a timeout
+func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply interface{}, timeout int) (err error) {
 	// Get our call, which contains the message ID
 	call := node.nextCall(addr)
 	
 	// Create Query
-	queryStruct := Query { ProcedureName: procedure, ProcedureData: args, MessageID: call.MessageID }
+	query := Query { ProcedureName: procedure, MessageID: call.MessageID }
+	query.ProcedureData[0] = args // Necessary because generics
+	
+	// Create Message
+	message := Message { Query: &query }
 	
 	// Encode it into BEncode
-	var b bytes.Buffer
-	query := bencode.Marshal(&b, queryStruct)
+	buf := new(bytes.Buffer)
+	bencodeE := bencode.NewEncoder(buf)
+	if err := bencodeE.Encode(message); err != nil {
+		return err
+	}
 	
 	// Buffer it into Big Endian format
-	var buf_bigEndian bytes.Buffer
-	err = binary.Write(&buf_bigEndian, binary.BigEndian, &query)
+	buf_bigEndian := new(bytes.Buffer)
+	err = binary.Write(buf_bigEndian, binary.BigEndian, buf.Bytes())
 	if err != nil {
 		return err
 	}
@@ -251,7 +260,7 @@ func (node *Node) Call(procedure string, addrString string, args interface{}, re
 	
 	node.pendingMutex.Lock()
 	// Set channel
-	*node.pending[call] = responseChannel
+	node.pending[call] = &responseChannel
 	// Delete channel after exit
 	defer func() {
 		node.pendingMutex.Lock()
@@ -260,7 +269,7 @@ func (node *Node) Call(procedure string, addrString string, args interface{}, re
 	}()
 	node.pendingMutex.Unlock()
 	
-	// If timeout isn't 0, initate the timeout function in another thread
+	// If timeout isn't 0, initate the timeout function concurrently
 	timeoutChan := make(chan bool, 1)
 	if timeout > 0 {
 		go func(){
@@ -275,7 +284,6 @@ func (node *Node) Call(procedure string, addrString string, args interface{}, re
     case qreply := <-*node.pending[call]:
 		// We received a reply
 		reply = qreply
-    	fmt.Printf("%s", qreply)
     case <-timeoutChan:
     	// We timed out
 		return new(TimeoutError)

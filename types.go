@@ -6,18 +6,18 @@ import (
 )
 
 type Message struct {
-	Query interface{} `bencode:"Q"`
-	Reply interface{} `bencode:"R"`
+	Query *Query `bencode:"Q,omitempty"`
+	Reply *Reply `bencode:"R,omitempty"`
 }
 
 type Query struct {
-	ProcedureName    string                 `bencode:"N"`   // Name of the procedure being executed
-	ProcedureData    interface{} `bencode:"D"` // Procedure argument(s)
-	MessageID      uint32                  `bencode:"I"` // ID to make this communication unique
+	ProcedureName    string       `bencode:"N"` // Name of the procedure being executed
+	ProcedureData    [1]interface{}  `bencode:"D"` // Procedure argument(s)
+	MessageID        uint32       `bencode:"I"` // ID to make this communication unique
 }
 
 type Reply struct {
-	ReturnData interface{} `bencode:"D"` // Procedure return value(s)
+	ReturnData [1]interface{} `bencode:"D"` // Procedure return value(s)
 	MessageID  uint32                  `bencode:"I"`  // ID of query we are responding to
 }
 
