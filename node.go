@@ -1,12 +1,10 @@
 package qrp
 
-// TODO: Change procedure receiver to pointer
-// TOOD: 
+// TOOD: Make query decoding more efficient by setting Query.ProcedureArguments as a bencode.RawMessage
 
 import (
 	"bytes"
-	"encoding/binary"
-	"github.com/liamzebedee/bencode/src/bencode" // BEncode
+	"github.com/zeebo/bencode" // BEncode
 	"net"
 	"sync"
 	"reflect"
@@ -28,14 +26,18 @@ type procedure struct {
 type Node struct {
 	connection net.PacketConn
 	connectionMTU uint32
-	procedures map[string]*procedure // Registered procedures on the node
-	pending map[call]*chan interface{} // A map of calls to queries pending responses
+	procedures map[string] *procedure // Registered procedures on the node
+	pending map[call] responseChannel // A map of calls to queries pending responses
 	messageID uint32
 	
 	pendingMutex sync.Mutex // to protect pending, messageID
 	sendingMutex sync.Mutex
 	proceduresMutex sync.Mutex
+	
+	serving bool
 }
+
+type responseChannel chan bencode.RawMessage
 
 type call struct {
 	MessageID uint32
@@ -48,7 +50,6 @@ func CreateNodeUDP(addr string, mtu uint32) (error, *Node) {
 	if err != nil {
 		return err, nil
 	}
-	fmt.Printf("%s created\n", addr) // DEBUG
 	return CreateNode(conn, mtu)
 }
 
@@ -57,7 +58,7 @@ func CreateNodeUDP(addr string, mtu uint32) (error, *Node) {
 func CreateNode(connection net.PacketConn, mtu uint32) (error, *Node) {
 	// Allocation
 	procedures := make(map[string]*procedure)
-	pending := make(map[call]*chan interface{})
+	pending := make(map[call] responseChannel)
 	sendingMutex, pendingMutex, proceduresMutex := new(sync.Mutex), new(sync.Mutex), new(sync.Mutex)
 	
 	// Initialize messageID to random value
@@ -77,7 +78,12 @@ func CreateNode(connection net.PacketConn, mtu uint32) (error, *Node) {
 
 // Listens and Serves, returning an error on failure
 func (node *Node) ListenAndServe() (err error) {
+	if node.serving {
+		return errors.New("Already serving")
+	}
+	node.serving = true
 	defer node.connection.Close()
+	defer func(){ node.serving = false }()
 	
 	for {
 		// Buffer size is 512 because it's the largest size without possible fragmentation
@@ -99,11 +105,11 @@ func (node *Node) ListenAndServe() (err error) {
 		if bytesRead > 0 {
 			// Process packet
 			go func() {
-				err := node.processPacket(&buffer, bytesRead, fromAddr)
+				err = node.processPacket(&buffer, bytesRead, fromAddr)
 				if err != nil {
-					fmt.Println(err.Error())
+					fmt.Printf("Error processing message: %s\n", err.Error())
 				}
-			} ()
+			}()
 		}
 	}
 	
@@ -111,16 +117,12 @@ func (node *Node) ListenAndServe() (err error) {
 }
 
 // Processes received packets
-func (Node *Node) processPacket(data *[]byte, read int, addr net.Addr) (error) {	
-	// Decode data into Big Endian encoding
-	data_bigEndian := make([]byte, len(*data))
-	err := binary.Read(bytes.NewBuffer(*data), binary.BigEndian, data_bigEndian)
+func (node *Node) processPacket(data *[]byte, read int, addr net.Addr) (error) {	
+	data_bigEndian, err := decodeIntoBigEndian(bytes.NewBuffer(*data))
 	if err != nil {
-		fmt.Println("binary.Read failed, couldn't read packet into BigEndian:", err)
+		fmt.Println("Couldn't read packet into BigEndian:", err)
 		return err
 	}
-	
-	fmt.Printf("%s\n", data_bigEndian)
 	
 	// Unmarshal BigEndian BEncode into struct
 	bencodeD := bencode.NewDecoder(bytes.NewBuffer(data_bigEndian))
@@ -130,18 +132,17 @@ func (Node *Node) processPacket(data *[]byte, read int, addr net.Addr) (error) {
 	}
 	
 	// Further processing
-	return Node.processMessage(&message, addr)
+	return node.processMessage(&message, addr)
 }
 
 // Processes raw messages
-func (Node *Node) processMessage(message *Message, addr net.Addr) (error) {
-	fmt.Printf("MSGSTRUCT: %s\n", *message)
+func (node *Node) processMessage(message *Message, addr net.Addr) (error) {
 	if query := message.Query; query != nil {
 		// Query
-		return Node.processQuery(query, addr)
+		return node.processQuery(query, addr)
 	} else if reply := message.Reply; reply != nil {
 		// Reply
-		return Node.processReply(reply, addr)
+		return node.processReply(reply, addr)
 	} else {
 		return new(InvalidMessageError)
 	}
@@ -149,25 +150,62 @@ func (Node *Node) processMessage(message *Message, addr net.Addr) (error) {
 }
 
 // Processes received queries
-func (Node *Node) processQuery(query *Query, addr net.Addr) (error) {
+func (node *Node) processQuery(query *Query, addr net.Addr) (error) {
 	procedureName := query.ProcedureName
-	if procedure := Node.procedures[procedureName]; procedure != nil {
+	if procedure := node.procedures[procedureName]; procedure != nil {
 		method := procedure.Method
 		function := method.Func
 		
-		print("QUERY: ", procedureName, "\n")
-		print("QUERY: ", query.ProcedureData[0], "\n")
+		// Initialize value
+		argValue, replyValue := reflect.New(procedure.ArgType.Elem()), reflect.New(procedure.ReplyType.Elem())		
 		
-		// Initialize values
-		argValue, replyValue := reflect.New(procedure.ArgType.Elem()), reflect.New(procedure.ReplyType.Elem())	
-		
-		v := reflect.ValueOf(query.ProcedureData[0])
 		// Set value of arg
-		argValue.Set(v)
+		argsReader := bytes.NewReader(query.ProcedureData)
+		argsDecoder := bencode.NewDecoder(argsReader)
+		err := argsDecoder.Decode(argValue.Interface())
+		if err != nil {
+			fmt.Printf("Error decoding procedure data into value: %s\n", err)
+		}
 		
 		// Invoke the function
 		function.Call([]reflect.Value{procedure.Receiver, argValue, replyValue})
 		
+		// Create reply
+		reply := Reply { MessageID: query.MessageID }
+		argsBuf := new(bytes.Buffer) 
+		argsEncoder := bencode.NewEncoder(argsBuf)
+		argsEncoder.Encode(replyValue.Interface())
+		reply.ReturnData, err = encodeIntoBigEndian(argsBuf)
+		
+		if err != nil {
+			fmt.Printf("Error encoding reply return data: %s\n", err)
+			return err
+		}
+		
+		// Create message
+		message := Message { Reply: &reply }
+		
+		// Encode message
+		messageBuf := new(bytes.Buffer)
+		messageEncoder := bencode.NewEncoder(messageBuf)
+		err = messageEncoder.Encode(message)
+		if err != nil {
+			fmt.Printf("Error encoding reply message into BEncode: %s\n", err)
+			return err
+		}
+		
+		message_bigEndian, err := encodeIntoBigEndian(messageBuf)
+		if err != nil {
+			fmt.Printf("Error encoding reply message into BigEndian: %s\n", err)
+			return err
+		}
+		
+		// Send to host
+		node.sendingMutex.Lock()
+		node.connection.WriteTo(message_bigEndian, addr)
+		node.sendingMutex.Unlock()
+		
+		return nil
 	} else {
 		return &BadProcedureError{ procedureName }
 	}
@@ -175,13 +213,27 @@ func (Node *Node) processQuery(query *Query, addr net.Addr) (error) {
 }
 
 // Processes received replies
-func (Node *Node) processReply(reply *Reply, addr net.Addr) (error) {
-	call := call { MessageID: reply.MessageID, Addr: addr }
+func (node *Node) processReply(reply *Reply, addr net.Addr) (error) {
+	// Construct call
+	chanCall := call { MessageID: reply.MessageID, Addr: addr }
 	
-	Node.pendingMutex.Lock()
+	// Get associated channel
+	responseChan := node.pending[chanCall] // get response channel
+	
+	fmt.Printf("CLIENT:%s\n", node.pending)
+	fmt.Printf("CLIENT:%s\n", chanCall)
+	if responseChan == nil {
+		fmt.Println("CLIENT: Chan is nil")
+	}
+	// The problem is we aren't getting the channel
+	if cap(responseChan) == 0 {
+		return &InvalidMessageMappingError { reply.MessageID }
+	}
+	
 	// Send return data
-	*Node.pending[call]<-reply.ReturnData
-	Node.pendingMutex.Unlock()
+	node.pendingMutex.Lock()
+	responseChan <- reply.ReturnData
+	node.pendingMutex.Unlock()
 	
 	return nil
 }
@@ -231,7 +283,7 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 	
 	// Create Query
 	query := Query { ProcedureName: procedure, MessageID: call.MessageID }
-	query.ProcedureData[0] = args // Necessary because generics
+	query.constructArgs(args)
 	
 	// Create Message
 	message := Message { Query: &query }
@@ -243,31 +295,26 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 		return err
 	}
 	
-	// Buffer it into Big Endian format
-	buf_bigEndian := new(bytes.Buffer)
-	err = binary.Write(buf_bigEndian, binary.BigEndian, buf.Bytes())
+	buf_bigEndian, err := encodeIntoBigEndian(buf)
 	if err != nil {
 		return err
 	}
 	
-	// Send to host
-	node.sendingMutex.Lock()
-	node.connection.WriteTo(buf_bigEndian.Bytes(), addr)
-	node.sendingMutex.Unlock()
-	
 	// Create channel for receiving response
-	responseChannel := make(chan interface{}, 1)
+	responseChan := make(responseChannel, 1)
 	
-	node.pendingMutex.Lock()
-	// Set channel
-	node.pending[call] = &responseChannel
+	// Allocate channel
+	node.pending[call] = responseChan
+	
 	// Delete channel after exit
 	defer func() {
-		node.pendingMutex.Lock()
 		delete(node.pending, call)
-		node.pendingMutex.Unlock() 
 	}()
-	node.pendingMutex.Unlock()
+	
+	// Send to host
+	node.sendingMutex.Lock()
+	node.connection.WriteTo(buf_bigEndian, addr)
+	node.sendingMutex.Unlock()
 	
 	// If timeout isn't 0, initate the timeout function concurrently
 	timeoutChan := make(chan bool, 1)
@@ -281,9 +328,16 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 	
 	// Wait for response on channel
 	select {
-    case qreply := <-*node.pending[call]:
+    case replydata := <-responseChan:
 		// We received a reply
-		reply = qreply
+		// Decode args
+		argsReader := bytes.NewReader(replydata)
+		argsDecoder := bencode.NewDecoder(argsReader)
+		err := argsDecoder.Decode(reply)
+		if err != nil {
+			fmt.Printf("Error decoding reply return data into value: %s\n", err)
+			return err
+		}
     case <-timeoutChan:
     	// We timed out
 		return new(TimeoutError)
