@@ -3,5 +3,5 @@ QRP is a simple packet-based RPC protocol. The design is based off KRPC (BitTorr
 
 This project is licensed under GPLv3 to Liam (liamzebedee) Edwards-Playne. 
 
-View the documentation [here](http://go.pkgdoc.org/github.com/liamzebedee/go-qrp) and see an example in rpc_test.go 
+View the documentation [here](http://go.pkgdoc.org/github.com/liamzebedee/go-qrp) and see an example in [rpc_test.go](https://github.com/liamzebedee/go-qrp/blob/master/rpc_test.go)
 
