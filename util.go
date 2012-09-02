@@ -1,13 +1,33 @@
+/*
+   Copyright Liam (liamzebedee) Edwards-Playne 2012
+
+   This file is part of QRP.
+
+   QRP is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   QRP is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with QRP.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 package qrp
 
+// Utility functions
+
 import (
-	"reflect"
-	"unicode"
-	"unicode/utf8"
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"net"
+	"reflect"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Is this type exported or a builtin?
@@ -36,51 +56,11 @@ func decodeIntoBigEndian(data *bytes.Buffer) ([]byte, error) {
 
 // Encode data into Big Endian encoding
 func encodeIntoBigEndian(data *bytes.Buffer) ([]byte, error) {
-	buf_bigEndian := new(bytes.Buffer) // Buffer to hold BigEndian payload
+	buf_bigEndian := new(bytes.Buffer)                                 // Buffer to hold BigEndian payload
 	err := binary.Write(buf_bigEndian, binary.BigEndian, data.Bytes()) // Write data into buf_bigEndian
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return buf_bigEndian.Bytes(), nil
-}
-
-type ConnBuffer bytes.Buffer
-
-// ReadFromConn reads data from r until EOF and appends it to the buffer.
-// The return value n is the number of bytes read.
-// Any error except io.EOF encountered during the read
-// is also returned.
-// If the buffer becomes too large, ReadFrom will panic with
-// ErrTooLarge.
-func (b *ConnBuffer) ReadFromConn(r net.PacketConn) (n int64, err error) {
-	b.lastRead = opInvalid
-	// If buffer is empty, reset to recover space.
-	if b.off >= len(b.buf) {
-		b.Truncate(0)
-	}
-	for {
-		if free := cap(b.buf) - len(b.buf); free < MinRead {
-			// not enough space at end
-			newBuf := b.buf
-			if b.off+free < MinRead {
-				// not enough space using beginning of buffer;
-				// double buffer capacity
-				newBuf = makeSlice(2*cap(b.buf) + MinRead)
-			}
-			copy(newBuf, b.buf[b.off:])
-			b.buf = newBuf[:len(b.buf)-b.off]
-			b.off = 0
-		}
-		m, e := r.Read(b.buf[len(b.buf):cap(b.buf)])
-		b.buf = b.buf[0 : len(b.buf)+m]
-		n += int64(m)
-		if e == io.EOF {
-			break
-		}
-		if e != nil {
-			return n, e
-		}
-	}
-	return n, nil // err is EOF, so return nil explicitly
 }

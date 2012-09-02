@@ -1,53 +1,73 @@
-package qrp
+/*
+   Copyright Liam (liamzebedee) Edwards-Playne 2012
 
-import (
+   This file is part of QRP.
 
-)
+   QRP is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   QRP is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with QRP.  If not, see <http://www.gnu.org/licenses/>.
+*/
 
 /*
+QRP: A simple packet-based RPC protocol
 
-QRP: A simple connectionless RPC protocol
+QRP is a simple efficient protocol for short and simple two-message communications between nodes
 
-QRP is a simple efficient protocol for simple two-message communications between nodes
-
-The protocol consists of nodes communicating via sending BEncoded messages. A message is either
+The protocol consists of nodes communicating via BEncoded messages. A message is either
 a query or a reply. 
 
-Every message has an 'M' key, whose value indicates whether it is a query, 'Q', or a reply, 'R'.
+Each message is structured so a top-level key identifies the message type and further data is
+mapped to this. This key is either 'Q' for query or 'R' for reply. 
 
-Both types of messages also have an 'I' key, which is the transaction ID, used for mapping 
-replies to queries. For a query, this ID can be any 32bit integer. For a reply, this ID is
-what it is in response to. 
+A message with a key 'Q' is a query. A query contains 3 keys. 'N' maps to the name of the procedure
+being called. 'D' maps to a list of arguments. 'I' maps to the uint32 transaction ID, used to make 
+the transaction unique.
 
-= Query =
-A query has 2 key/value pairs:
- 'Q':string     -> Procedure Name
- 'D':dictionary -> Procedure Data (parameters)
+The other type of message is a reply, which has a key 'R'. A reply contains 2 keys.
+The first key is 'R', which maps to the return data. The other key is 'I', which is
+a uint32 used to identify the query the reply is responding to. 
+*/
 
-e.g.
-::JSON
- {
- 	'M': 'Q',
- 	'Q': 'Add',
- 	'I': 21321,
- 	'D': {
- 		'a': 1,
- 		'b': 2
- 	}
- }
+package qrp
 
-= Reply =
-A reply has a single key/value pair:
- 'D':dictionary -> Procedure Return Data
+/*
+Package qrp provides access to the exported methods of an object across a packet-based connection.
+QRP is designed to work with multiple packet-based protocols such as UDP and SCTP. UDP will be used
+as an example.
+
+Firstly you must create a node using any of the CreateNode? methods:
+ - CreateNode
+ - CreateNodeUDP
 
 e.g.
-::JSON
-{
-	'M': 'R',
-	'I': '21321',
-	'D': {
-		'R': 3
+ 	node, err := CreateNodeUDP("udp", ":50060")
+
+Nodes serve procedures. Procedures are installed using the Register function, which takes an object and
+registers the exported methods of that object.
+
+ 	type AddService struct {}
+	func (s *AddService) Add(args *AddArgs, reply *AddReply) {
+		reply.Result = args.A + args.B
 	}
-}
 
+
+	type AddArgs struct {
+		A, B int32
+	}
+	type AddReply struct {
+		Result int32
+	}
+
+	node.Register(AddService{}) // Will export the Add method
+
+For more detail, see rpc_test.go. Much of this library follows the same standards in go/net/rpc
 */
