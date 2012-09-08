@@ -40,7 +40,7 @@ type AddReply struct {
 
 func Test_Single(*testing.T) {
 	// Server
-	err, node := CreateNodeUDP("udp", "127.0.0.1:50000", 512)
+	node, err := CreateNodeUDP("udp", "127.0.0.1:50000", 512)
 	if err != nil {
 		print("SERVER: Can't create server node -", err.Error())
 		return
@@ -61,7 +61,7 @@ func Test_Single(*testing.T) {
 	println("SERVER: Serving")
 
 	// Client
-	err, client := CreateNodeUDP("udp", "127.0.0.1:60000", 512)
+	client, err := CreateNodeUDP("udp", "127.0.0.1:60000", 512)
 	if err != nil {
 		print("CLIENT: Can't create client node - ", err.Error())
 		return

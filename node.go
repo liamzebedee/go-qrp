@@ -71,17 +71,17 @@ type Connection interface {
 }
 
 // Creates a node using UDP, returning an error if failure
-func CreateNodeUDP(net, addr string, mtu int32) (error, *Node) {
+func CreateNodeUDP(net, addr string, mtu int32) (*Node, error) {
 	udpConn, err := newUDPConn(net, addr, mtu)
 	if err != nil {
-		return err, nil
+		return nil, err
 	}
 
 	return CreateNode(udpConn)
 }
 
 // Creates a node that performs IO on connection
-func CreateNode(connection Connection) (error, *Node) {
+func CreateNode(connection Connection) (*Node, error) {
 	node := Node{}
 
 	// Maps
@@ -98,7 +98,7 @@ func CreateNode(connection Connection) (error, *Node) {
 	// Initialize messageID to pseudorandom value
 	node.messageID = uint32(time.Now().Nanosecond())
 
-	return nil, &node
+	return &node, nil
 }
 
 // Listens for queries and replies, serving procedures registered by Register
