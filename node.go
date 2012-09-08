@@ -131,7 +131,8 @@ ServeLoop:
 			if read > 0 {
 				// Process packet
 				go func() {
-					err = node.processPacket(buffer, read, addr)
+					err = nil
+					err := node.processPacket(buffer, read, addr)
 					if err != nil {
 						fmt.Errorf("qrp:", "Error processing message - %s\n", err.Error())
 					}
