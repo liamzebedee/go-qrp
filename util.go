@@ -24,7 +24,6 @@ package qrp
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"reflect"
 	"unicode"
 	"unicode/utf8"
@@ -50,8 +49,11 @@ func isExported(name string) bool {
 func decodeIntoBigEndian(data *bytes.Buffer) ([]byte, error) {
 	buf_bigEndian := make([]byte, data.Len())
 	err := binary.Read(data, binary.BigEndian, buf_bigEndian) // Read data into buf_bigEndian
-	fmt.Print("")
-	return buf_bigEndian, err
+	if err != nil {
+		return nil, err
+	}
+	
+	return buf_bigEndian, nil
 }
 
 // Encode data into Big Endian encoding

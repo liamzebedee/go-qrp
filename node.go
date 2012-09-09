@@ -123,7 +123,7 @@ ServeLoop:
 			buffer, read, addr, err := node.connection.ReadNextPacket()
 
 			if err != nil {
-				fmt.Errorf("qrp:", "Error reading from connection\n")
+				fmt.Errorf("qrp:", "Error reading from connection - %s\n", err.Error())
 				return err
 			}
 
@@ -134,7 +134,7 @@ ServeLoop:
 					err = nil
 					err := node.processPacket(buffer, read, addr)
 					if err != nil {
-						fmt.Errorf("qrp:", "Error processing message - %s\n", err.Error())
+						fmt.Errorf("qrp:", "Error processing packet - %s\n", err.Error())
 					}
 				}()
 			}
@@ -158,7 +158,6 @@ func (node *Node) Stop() error {
 func (node *Node) processPacket(data []byte, read int, addr net.Addr) error {
 	data_bigEndian, err := decodeIntoBigEndian(bytes.NewBuffer(data))
 	if err != nil {
-		fmt.Errorf("qrp:", "Couldn't read packet into BigEndian:", err)
 		return err
 	}
 
@@ -203,7 +202,8 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		argsDecoder := bencode.NewDecoder(argsReader)
 		err := argsDecoder.Decode(argValue.Interface())
 		if err != nil {
-			fmt.Errorf("qrp:", "Error decoding procedure data into value: %s\n", err)
+			fmt.Errorf("qrp:", "Error decoding procedure data into value: %s\n", err.Error())
+			return err
 		}
 
 		// Invoke the function
@@ -217,7 +217,7 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		reply.ReturnData, err = encodeIntoBigEndian(argsBuf)
 
 		if err != nil {
-			fmt.Errorf("qrp:", "Error encoding reply return data: %s\n", err)
+			fmt.Errorf("qrp:", "Error encoding reply return data: %s\n", err.Error())
 			return err
 		}
 
@@ -229,13 +229,13 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		messageEncoder := bencode.NewEncoder(messageBuf)
 		err = messageEncoder.Encode(message)
 		if err != nil {
-			fmt.Errorf("qrp:", "Error encoding reply message into BEncode: %s\n", err)
+			fmt.Errorf("qrp:", "Error encoding reply message into BEncode: %s\n", err.Error())
 			return err
 		}
 
 		message_bigEndian, err := encodeIntoBigEndian(messageBuf)
 		if err != nil {
-			fmt.Errorf("qrp:", "encoding reply message into BigEndian: %s\n", err)
+			fmt.Errorf("qrp:", "Error encoding reply message into BigEndian: %s\n", err.Error())
 			return err
 		}
 
@@ -328,11 +328,13 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 	buf := new(bytes.Buffer)
 	bencodeE := bencode.NewEncoder(buf)
 	if err := bencodeE.Encode(message); err != nil {
+		fmt.Errorf("qrp:", "Error encoding query message into BEncode: %s\n", err.Error())
 		return err
 	}
 
 	buf_bigEndian, err := encodeIntoBigEndian(buf)
 	if err != nil {
+		fmt.Errorf("qrp:", "Error encoding query message into BigEndian: %s\n", err.Error())
 		return err
 	}
 
@@ -375,7 +377,7 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 		argsDecoder := bencode.NewDecoder(argsReader)
 		err := argsDecoder.Decode(reply)
 		if err != nil {
-			fmt.Errorf("qrp:", "Error decoding reply return data into value: %s\n", err)
+			fmt.Errorf("qrp:", "Error decoding reply return data into value: %s\n", err.Error())
 			return err
 		}
 	case <-timeoutChan:
