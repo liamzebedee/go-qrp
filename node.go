@@ -70,16 +70,6 @@ type Connection interface {
 	ReadNextPacket() ([]byte, int, net.Addr, error)
 }
 
-// Creates a node using UDP, returning an error if failure
-func CreateNodeUDP(net, addr string, mtu int32) (*Node, error) {
-	udpConn, err := newUDPConn(net, addr, mtu)
-	if err != nil {
-		return nil, err
-	}
-
-	return CreateNode(udpConn)
-}
-
 // Creates a node that performs IO on connection
 func CreateNode(connection Connection) (*Node, error) {
 	node := Node{}
@@ -296,17 +286,6 @@ func (node *Node) nextCall(addr net.Addr) (nextCall call) {
 	}
 
 	return nextCall
-}
-
-// Calls a procedure on a node using the UDP protocol
-// see Node.Call
-func (node *Node) CallUDP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
-	addr, err := net.ResolveUDPAddr("ip", addrString)
-	if err != nil {
-		return err
-	}
-
-	return node.Call(procedure, addr, args, reply, timeout)
 }
 
 // Tries to call 'procedure' on remote node, with supplied 'args' and allocated return values 'reply'. 

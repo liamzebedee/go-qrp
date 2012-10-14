@@ -54,3 +54,24 @@ func (conn *UDPConn) ReadNextPacket() (buffer []byte, read int, addr net.Addr, e
 
 	return buffer, read, addr, err
 }
+
+// Creates a node using UDP, returning an error if failure
+func CreateNodeUDP(net, addr string, mtu int32) (*Node, error) {
+	udpConn, err := newUDPConn(net, addr, mtu)
+	if err != nil {
+		return nil, err
+	}
+
+	return CreateNode(udpConn)
+}
+
+// Calls a procedure on a node using the UDP protocol
+// see Node.Call
+func (node *Node) CallUDP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
+	addr, err := net.ResolveUDPAddr("ip", addrString)
+	if err != nil {
+		return err
+	}
+
+	return node.Call(procedure, addr, args, reply, timeout)
+}
