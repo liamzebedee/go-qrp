@@ -122,7 +122,6 @@ ServeLoop:
 
 			if err != nil {
 				fmt.Errorf("qrp:", "Error reading from connection - %s\n", err.Error())
-				return err
 			}
 
 			// If we read a packet
