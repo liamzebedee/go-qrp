@@ -36,7 +36,7 @@ import (
 
 type TCPModule struct {
 	listener net.Listener
-	packetQueue chan tcpPacket
+	packetQueue chan packet
 	activeConnections map[string] net.Conn
 	open bool
 }
@@ -47,9 +47,9 @@ func newTCPModule(network, addr string) (*TCPModule, error) {
 		return nil, err
 	}
 	
-	packetQueue := make(chan tcpPacket)
-	activeConns := make(map[string] net.Conn)
-	tcpModule := TCPModule{ tcpListener, packetQueue, activeConns, true }
+	packetQueue := make(chan packet)
+	activeConnections := make(map[string] net.Conn)
+	tcpModule := TCPModule{ tcpListener, packetQueue, activeConnections, true }
 
 	return &tcpModule, nil
 }
@@ -60,8 +60,10 @@ func (tcpModule *TCPModule) listen() () {
 		conn, err := tcpModule.listener.Accept()
 		if err != nil {
 			// Not much can be done
+			fmt.Errorf("qrp:", "connection not accepted - ", err.Error())
 			continue
 		}
+		fmt.Printf("New connection on %s\n", conn.RemoteAddr().String())
 		go tcpModule.handleConnection(conn)
 	}
 }
@@ -72,7 +74,8 @@ func (tcpModule *TCPModule) handleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	
 	// Read next message
-	for {		
+	for {
+		fmt.Printf("Packet received on %s\n", conn.RemoteAddr().String())
 		// Read from stream until NUL byte
 		buffer, err := reader.ReadBytes(0x00)
 		read := len(buffer)
@@ -85,23 +88,17 @@ func (tcpModule *TCPModule) handleConnection(conn net.Conn) {
 		}
 		
 		// Send to packet queue
-		packet := tcpPacket{ conn.RemoteAddr(), buffer, read }
-		tcpModule.packetQueue <- packet
+		p := packet{ buffer, read, conn.RemoteAddr(), nil }
+		tcpModule.packetQueue <- p
 	}
 	
 	conn.Close()
 }
 
-type tcpPacket struct {
-	addr net.Addr
-	buffer []byte
-	read int
-}
-
-func (tcpModule *TCPModule) ReadNextPacket() (buffer []byte, read int, addr net.Addr, err error) {
+func (tcpModule *TCPModule) ReadNextPacket() (packet) {
 	packet := <-tcpModule.packetQueue
 	
-	return packet.buffer, packet.read, packet.addr, nil
+	return packet
 }
 
 func (tcpModule *TCPModule) WriteTo(b []byte, addr net.Addr) (n int, err error) {
@@ -110,6 +107,18 @@ func (tcpModule *TCPModule) WriteTo(b []byte, addr net.Addr) (n int, err error) 
 	}
 	
 	tcpConn := tcpModule.activeConnections[addr.String()]
+	
+	if tcpConn == nil {
+		tcpConn, err := net.Dial(addr.Network(), addr.String())
+		fmt.Printf("Connecting to Addr: %s[%s]\n", addr.Network(), addr.String())
+		fmt.Printf("Connecting from Addr: %s[%s]\n", tcpConn.LocalAddr().Network(), tcpConn.LocalAddr().String())
+		if err != nil {
+			return 0, err
+		}
+		
+		tcpModule.activeConnections[addr.String()] = tcpConn
+	}
+	
 	writer := bufio.NewWriter(tcpConn)
 	
 	n, err = writer.Write(append(b, 0x00))
@@ -139,8 +148,8 @@ func (tcpModule *TCPModule) Close() error {
 }
 
 // Creates a TCP node, returning an error if failure
-func CreateNodeTCP(addr string) (*Node, error) {
-	tcpModule, err := newTCPModule("tcp", addr)
+func CreateNodeTCP(net, addr string) (*Node, error) {
+	tcpModule, err := newTCPModule(net, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +162,7 @@ func CreateNodeTCP(addr string) (*Node, error) {
 // Calls a procedure on a node using the TCP protocol. 
 // See Node.Call
 func (node *Node) CallTCP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
-	addr, err := net.ResolveIPAddr("ip", addrString)
+	addr, err := net.ResolveTCPAddr("tcp", addrString)
 	if err != nil {
 		return err
 	}
