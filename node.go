@@ -62,9 +62,17 @@ type Node struct {
 }
 
 type Connection interface {
-	// QRP is inherently a packet-based protocol
-	net.PacketConn
+	// WriteTo writes a packet with payload b to addr.
+    // WriteTo can be made to time out and return
+    // an error with Timeout() == true after a fixed time limit;
+    // see SetDeadline and SetWriteDeadline.
+    // On packet-oriented connections, write timeouts are rare.
+    WriteTo(b []byte, addr net.Addr) (n int, err error)
 
+    // Close closes the connection.
+    // Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.
+    Close() error
+    
 	// Reads the next packet from the connection and returns the buffer, bytes read and any errors
 	// This is designed so we can work with multiple protocols, without having to specify buffer sizes
 	ReadNextPacket() ([]byte, int, net.Addr, error)
