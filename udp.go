@@ -46,7 +46,6 @@ type UDPConn struct {
 }
 
 func (conn *UDPConn) ReadNextPacket() (buffer []byte, read int, addr net.Addr, err error) {
-	// Buffer size is 512 because it's the largest size without possible fragmentation
 	buffer = make([]byte, conn.mtu)
 
 	// Read a packet into the buffer
@@ -68,7 +67,7 @@ func CreateNodeUDP(net, addr string, mtu int32) (*Node, error) {
 // Calls a procedure on a node using the UDP protocol
 // see Node.Call
 func (node *Node) CallUDP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
-	addr, err := net.ResolveUDPAddr("ip", addrString)
+	addr, err := net.ResolveIPAddr("ip", addrString)
 	if err != nil {
 		return err
 	}
