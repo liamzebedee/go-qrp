@@ -25,34 +25,37 @@ import (
 	"net"
 )
 
-func newTCPConn(network, addr string) (*TCPConn, error) {
-	tcpListener, err := net.ListenTCP(network, addr)
+type TCPModule struct {
+	listener net.Listener
+	packetQueue chan tcpPacket
+}
+
+func newTCPModule(network, addr string) (*TCPModule, error) {
+	tcpListener, err := net.Listen(network, addr)
 	if err != nil {
 		return nil, err
 	}
 	
-	packetQueue := nil
-	tcpConn := TCPConn{tcpListener, packetQueue}
+	packetQueue := make(chan tcpPacket)
+	tcpModule := TCPModule{ tcpListener, packetQueue }
 
-	return &udpConn, nil
+	return &tcpModule, nil
 }
 
-type TCPConn struct {
-	tcpListener net.TCPListener
-	packetQueue int //*Queue
-}
-
-func (conn *TCPConn) Listen() () {
+func (tcpModule *TCPModule) listen() () {
 	for {
-		conn, err := conn.tcpListener.Accept()
+		conn, err := tcpModule.listener.Accept()
 		if err != nil {
-			// handle error
+			// Not much can be done
 			continue
 		}
-		go func(conn) {
-			// Transfer packets into packetQueue
-		} ()
+		go tcpModule.handleConnection(conn)
 	}
+}
+
+func (tcpModule *TCPModule) handleConnection(conn net.Conn) {
+	// Read next message
+	// Send to packet queue
 }
 
 type tcpPacket struct {
@@ -62,22 +65,27 @@ type tcpPacket struct {
 	err error
 }
 
-func (conn *TCPConn) ReadNextPacket() (buffer []byte, read int, addr net.Addr, err error) {
-	/*
-	packet := conn.packetQueue.Pop()
-	return packet.buffer, packet.size, packet.addr, packet.err
-	*/
+func (tcpModule *TCPModule) ReadNextPacket() (buffer []byte, read int, addr net.Addr, err error) {
+	
 	return buffer, read, addr, err
 }
 
+func (tcpModule *TCPModule) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+	return n, err
+}
+
+func (tcpModule *TCPModule) Close() error {
+	return nil
+}
+
 // Creates a node using UDP, returning an error if failure
-func CreateNodeTCP(net, addr string) (*Node, error) {
-	tcpConn, err := newTCPConn(net, addr)
+func CreateNodeTCP(addr string) (*Node, error) {
+	tcpModule, err := newTCPModule("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 
-	return CreateNode(udpConn)
+	return CreateNode(tcpModule)
 }
 
 // Calls a procedure on a node using the UDP protocol
