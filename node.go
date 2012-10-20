@@ -49,12 +49,13 @@ type call struct {
 
 // Our local node
 type Node struct {
-	connection Connection
+	Connection
 	procedures map[string]*procedure     // Registered procedures on the node
 	pending    map[call]*responseChannel // A map of calls to queries pending responses
 	messageID  uint32                    // Current messageID
 	callPool   chan call
 	running    chan bool
+	done       chan bool
 
 	pendingMutex    sync.Mutex // to protect pending, messageID
 	sendingMutex    sync.Mutex
@@ -75,7 +76,7 @@ type Connection interface {
     
 	// Reads the next packet from the connection and returns the buffer, bytes read and any errors
 	// This is designed so we can work with multiple protocols, without having to specify buffer sizes
-	ReadNextPacket() ([]byte, int, net.Addr, error)
+	ReadNextPacket() (packet)
 }
 
 // Creates a node that performs IO on connection
@@ -92,11 +93,18 @@ func CreateNode(connection Connection) (*Node, error) {
 	node.proceduresMutex = *new(sync.Mutex)
 
 	// Connection
-	node.connection = connection
+	node.Connection = connection
 	// Initialize messageID to pseudorandom value
 	node.messageID = uint32(time.Now().Nanosecond())
 
 	return &node, nil
+}
+
+type packet struct {
+	buffer []byte
+	read int
+	addr net.Addr
+	err error
 }
 
 // Listens for queries and replies, serving procedures registered by Register
@@ -106,38 +114,49 @@ func (node *Node) ListenAndServe() (err error) {
 		return errors.New("Already serving")
 	}
 	node.running = make(chan bool)
-
-	defer node.connection.Close()
+	packets := make(chan packet)
+	
+	defer node.Connection.Close()
+	
+	go func() {
+		for {
+			select {
+				case <-node.running:
+					return
+				default:
+					packets <- node.ReadNextPacket()
+			}
+		}
+	} ()
 
 ServeLoop:
 	for {
 		select {
 		case <-node.running:
 			// Signal to stop server
-			close(node.running)
+			fmt.Println("qrp:", "Closing server")
+			
 			break ServeLoop
-		default:
-			// Read the next packet
-			buffer, read, addr, err := node.connection.ReadNextPacket()
-
-			if err != nil {
+		case packet := <- packets:
+			if packet.err != nil {
 				fmt.Errorf("qrp:", "Error reading from connection - %s\n", err.Error())
 			}
 
 			// If we read a packet
-			if read > 0 {
+			if packet.read > 0 {
 				// Process packet
 				go func() {
-					err = nil
-					err := node.processPacket(buffer, read, addr)
+					err := node.processPacket(packet.buffer, packet.read, packet.addr)
 					if err != nil {
-						fmt.Errorf("qrp:", "Error processing packet - %s\n", err.Error())
+						fmt.Errorf("qrp:", "Error processing packet - %s\n", packet.err.Error())
 					}
 				}()
 			}
 		}
 	}
-
+	
+	node.done <- true
+	
 	return nil
 }
 
@@ -146,8 +165,9 @@ func (node *Node) Stop() error {
 	if node.running == nil {
 		return errors.New("Error - server not running")
 	}
-
+	node.done = make(chan bool)
 	node.running <- true
+	<-node.done
 	return nil
 }
 
@@ -238,7 +258,7 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 
 		// Send to host
 		node.sendingMutex.Lock()
-		node.connection.WriteTo(message_bigEndian, addr)
+		node.WriteTo(message_bigEndian, addr)
 		node.sendingMutex.Unlock()
 
 		return nil
@@ -341,7 +361,7 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 
 	// Send to host
 	node.sendingMutex.Lock()
-	node.connection.WriteTo(buf_bigEndian, addr)
+	node.WriteTo(buf_bigEndian, addr)
 	node.sendingMutex.Unlock()
 
 	// If timeout isn't 0, initate the timeout function concurrently
