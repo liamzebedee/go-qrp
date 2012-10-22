@@ -45,13 +45,13 @@ type UDPConn struct {
 	mtu int32
 }
 
-func (conn *UDPConn) ReadNextPacket() (buffer []byte, read int, addr net.Addr, err error) {
-	buffer = make([]byte, conn.mtu)
+func (conn *UDPConn) ReadNextPacket() (packet) {
+	buffer := make([]byte, conn.mtu)
 
 	// Read a packet into the buffer
-	read, addr, err = conn.ReadFrom(buffer)
+	read, addr, err := conn.ReadFrom(buffer)
 
-	return buffer, read, addr, err
+	return packet{ buffer, read, addr, err }
 }
 
 // Creates a node using UDP, returning an error if failure
@@ -60,14 +60,14 @@ func CreateNodeUDP(net, addr string, mtu int32) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	
 	return CreateNode(udpConn)
 }
 
 // Calls a procedure on a node using the UDP protocol
 // see Node.Call
 func (node *Node) CallUDP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
-	addr, err := net.ResolveIPAddr("ip", addrString)
+	addr, err := net.ResolveUDPAddr("udp", addrString)
 	if err != nil {
 		return err
 	}

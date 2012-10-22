@@ -29,127 +29,15 @@ package qrp
 
 import (
 	"net"
+	"sync"
+	"fmt"
 	"bufio"
 	"io"
-	"fmt"
 )
 
-type TCPModule struct {
-	listener net.Listener
-	packetQueue chan packet
-	activeConnections map[string] net.Conn
-	open bool
-}
-
-func newTCPModule(network, addr string) (*TCPModule, error) {
-	tcpListener, err := net.Listen(network, addr)
-	if err != nil {
-		return nil, err
-	}
-	
-	packetQueue := make(chan packet)
-	activeConnections := make(map[string] net.Conn)
-	tcpModule := TCPModule{ tcpListener, packetQueue, activeConnections, true }
-
-	return &tcpModule, nil
-}
-
-// Listens for connections, and instantiates a new goroutine for each Accept
-func (tcpModule *TCPModule) listen() () {
-	for {
-		conn, err := tcpModule.listener.Accept()
-		if err != nil {
-			// Not much can be done
-			fmt.Errorf("qrp:", "connection not accepted - ", err.Error())
-			continue
-		}
-		fmt.Printf("New connection on %s\n", conn.RemoteAddr().String())
-		go tcpModule.handleConnection(conn)
-	}
-}
-
-func (tcpModule *TCPModule) handleConnection(conn net.Conn) {
-	// Store connection
-	tcpModule.activeConnections[conn.RemoteAddr().String()] = conn
-	reader := bufio.NewReader(conn)
-	
-	// Read next message
-	for {
-		fmt.Printf("Packet received on %s\n", conn.RemoteAddr().String())
-		// Read from stream until NUL byte
-		buffer, err := reader.ReadBytes(0x00)
-		read := len(buffer)
-		if err == io.EOF && read == 0 {
-			continue
-		} else if err != nil {
-			// Close conn, bad packet format
-			fmt.Errorf("qrp:", "Closing connection of", conn.RemoteAddr().String(), "-", "Bad packet format")
-			break
-		}
-		
-		// Send to packet queue
-		p := packet{ buffer, read, conn.RemoteAddr(), nil }
-		tcpModule.packetQueue <- p
-	}
-	
-	conn.Close()
-}
-
-func (tcpModule *TCPModule) ReadNextPacket() (packet) {
-	packet := <-tcpModule.packetQueue
-	
-	return packet
-}
-
-func (tcpModule *TCPModule) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	if(!tcpModule.open) {
-		return 0, nil
-	}
-	
-	tcpConn := tcpModule.activeConnections[addr.String()]
-	
-	if tcpConn == nil {
-		tcpConn, err := net.Dial(addr.Network(), addr.String())
-		fmt.Printf("Connecting to Addr: %s[%s]\n", addr.Network(), addr.String())
-		fmt.Printf("Connecting from Addr: %s[%s]\n", tcpConn.LocalAddr().Network(), tcpConn.LocalAddr().String())
-		if err != nil {
-			return 0, err
-		}
-		
-		tcpModule.activeConnections[addr.String()] = tcpConn
-	}
-	
-	writer := bufio.NewWriter(tcpConn)
-	
-	n, err = writer.Write(append(b, 0x00))
-	if err != nil {
-		return 0, err
-	}
-	
-	return n, err
-}
-
-func (tcpModule *TCPModule) Close() error {
-	tcpModule.open = false
-	
-	// Stop accepting new connections
-	err := tcpModule.listener.Close()
-	if err != nil {
-		tcpModule.open = true
-		return err
-	}
-	
-	// Close all active connections
-	for _, conn := range tcpModule.activeConnections {
-		conn.Close()
-	}
-	
-	return nil
-}
-
 // Creates a TCP node, returning an error if failure
-func CreateNodeTCP(net, addr string) (*Node, error) {
-	tcpModule, err := newTCPModule(net, addr)
+func CreateNodeTCP(net, listenAddr, connectAddr string) (*Node, error) {
+	tcpModule, err := newTCPModule(net, listenAddr, connectAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +45,123 @@ func CreateNodeTCP(net, addr string) (*Node, error) {
 	go tcpModule.listen()
 
 	return CreateNode(tcpModule)
+}
+
+type TCPModule struct {
+	routines sync.WaitGroup
+	listenRoutine chan bool
+	
+	listener *net.TCPListener
+	connectAddr *net.TCPAddr // Address by which we connect to other nodes
+	activeConnections map[string] net.Conn
+	closed bool
+	
+	packetQueue chan packet
+}
+
+func newTCPModule(network, listenAddrStr, connectAddrStr string) (*TCPModule, error) {
+	listenAddr, err := net.ResolveTCPAddr(network, listenAddrStr)
+	if err != nil {
+		return nil, err
+	}
+	
+	connectAddr, err := net.ResolveTCPAddr(network, connectAddrStr)
+	if err != nil {
+		return nil, err
+	}
+	
+	tcpListener, err := net.ListenTCP(network, listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	
+	tcpModule := TCPModule { }
+	tcpModule.listener = tcpListener
+	tcpModule.connectAddr = connectAddr
+	tcpModule.listenRoutine = make(chan bool)
+	tcpModule.packetQueue = make(chan packet)
+	tcpModule.activeConnections = make(map[string] net.Conn)
+	tcpModule.closed = false
+	
+	go tcpModule.listen()
+	
+	return &tcpModule, nil
+}
+
+// Listens for connections, and instantiates a new goroutine for each Accept
+func (tcpModule *TCPModule) listen() () {
+	tcpModule.routines.Add(1)
+	defer tcpModule.routines.Done()
+	
+	select {
+		case <-tcpModule.listenRoutine:
+			tcpModule.listener.Close()
+			return
+		default:
+			conn, err := tcpModule.listener.Accept()
+			if err != nil {
+				// Not much can be done
+				fmt.Printf("qrp: connection not accepted - %s\n", err.Error())
+			} else {
+				go tcpModule.handleConnection(conn)
+			}
+	}
+}
+
+func (tcpModule *TCPModule) handleConnection(conn net.Conn) {
+	tcpModule.routines.Add(1)
+	defer tcpModule.routines.Done()
+	
+	// Store connection
+	tcpModule.activeConnections[conn.RemoteAddr().String()] = conn
+	reader := bufio.NewReader(conn)
+	
+	// Read next message
+	for tcpModule.closed {
+		// Read from stream until NUL byte
+		buffer, err := reader.ReadBytes(0)
+		read := len(buffer)
+		
+		if err == io.EOF && read == 0 {
+			// No packet, no cry
+			continue
+			
+		} else if err != nil {
+			// Close conn, bad packet format
+			fmt.Errorf("qrp: Closing connection of %s - Bad packet format\n")
+			return
+			
+		} else {
+			fmt.Printf("Packet received from %s\n", conn.RemoteAddr().String())
+		
+			// Send to packet queue
+			p := packet{ buffer, read, conn.RemoteAddr(), nil }
+			tcpModule.packetQueue <- p
+		}
+			
+	}
+	
+	conn.Close()
+}
+
+func (tcpModule *TCPModule) ReadNextPacket() (packet) {
+	if(tcpModule.closed) {
+		return packet{}
+	}
+	return <-tcpModule.packetQueue
+}
+
+func (tcpModule *TCPModule) Close() error {
+	// Signal listen goroutine to close
+	tcpModule.listenRoutine <- true
+	
+	// Signal all connection goroutines to close
+	tcpModule.closed = true
+	
+	// Wait for goroutines to close
+	tcpModule.routines.Wait()
+	
+	return nil
 }
 
 // Calls a procedure on a node using the TCP protocol. 
@@ -168,4 +173,38 @@ func (node *Node) CallTCP(procedure string, addrString string, args interface{},
 	}
 
 	return node.Call(procedure, addr, args, reply, timeout)
+}
+
+func (tcpModule *TCPModule) WriteTo(b []byte, addr net.Addr) (int, error) {
+	if tcpModule.closed {
+		return 0, nil
+	}
+	
+	tcpConn := tcpModule.activeConnections[addr.String()]
+	
+	// First time we are connecting
+	if tcpConn == nil {
+		addrConnectTo, err := net.ResolveTCPAddr("tcp", addr.String())
+		if err != nil {
+			return 0, err
+		}
+		
+		fmt.Printf("%s connecting to %s\n", tcpModule.connectAddr.String(), addrConnectTo.String())
+		
+		tcpConn, err := net.DialTCP(addr.Network(), tcpModule.connectAddr, addrConnectTo)
+		if err != nil {
+			fmt.Errorf("qrp:", "error writing to connection -", err.Error())
+			return 0, err
+		}
+		
+		go tcpModule.handleConnection(tcpConn)
+	}
+	writer := bufio.NewWriter(tcpConn)
+	
+	n, err := writer.Write(append(b, 0x00))
+	if err != nil {
+		return 0, err
+	}
+	
+	return n, nil
 }

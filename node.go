@@ -116,8 +116,6 @@ func (node *Node) ListenAndServe() (err error) {
 	node.running = make(chan bool)
 	packets := make(chan packet)
 	
-	defer node.Connection.Close()
-	
 	go func() {
 		for {
 			select {
@@ -135,6 +133,7 @@ ServeLoop:
 		case <-node.running:
 			// Signal to stop server
 			fmt.Println("qrp:", "Closing server")
+			node.Connection.Close()
 			
 			break ServeLoop
 		case packet := <- packets:
@@ -166,7 +165,6 @@ func (node *Node) Stop() error {
 		return errors.New("Error - server not running")
 	}
 	node.done = make(chan bool)
-	node.running <- true
 	<-node.done
 	return nil
 }
@@ -361,9 +359,11 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 
 	// Send to host
 	node.sendingMutex.Lock()
-	node.WriteTo(buf_bigEndian, addr)
+	if _, err = node.WriteTo(buf_bigEndian, addr); err != nil {
+		return err
+	}
 	node.sendingMutex.Unlock()
-
+	
 	// If timeout isn't 0, initate the timeout function concurrently
 	timeoutChan := make(chan bool, 1)
 	if timeout > 0 {

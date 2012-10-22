@@ -72,6 +72,8 @@ The other type of message is a reply, which has a key 'R'. A reply contains 2 ke
 The first key is 'R', which maps to the return data. The other key is 'I', which is
 a uint32 used to identify the query the reply is responding to. 
 
+On stream-based connections, QRP delimits messages by the NUL byte (0x00)
+
 Why QRP? Why not JSON-RPC?
 
 QRP is designed to be really really minimal. JSON-RPC uses the full names of properties (method 
