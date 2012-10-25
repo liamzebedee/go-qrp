@@ -80,4 +80,7 @@ QRP is designed to be really really minimal. JSON-RPC uses the full names of pro
 instead of m etc.). JSON itself is also quite a bulky encoding scheme in comparison to BEncode. 
 Another difference between JSON-RPC and QRP is the absence of an error property. Errors aren't 
 always useful for a node, so why include them?
+
+QRP is also very modular in comparison to go/net/rpc. node.go contains all the functions related to
+operating a node, including processing received packets 
 */

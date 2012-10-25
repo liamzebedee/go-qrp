@@ -19,7 +19,10 @@
 
 package qrp
 
-// Contains bulk of code for operating the node (register, listen & serve, etc.)
+// Handles packets and overall operations of the node
+// TODO
+// - Make logging better, more detailed (IP+port of node) and uniform
+// - TCP
 
 import (
 	"bytes"
@@ -53,34 +56,27 @@ type Node struct {
 	procedures map[string]*procedure     // Registered procedures on the node
 	pending    map[call]*responseChannel // A map of calls to queries pending responses
 	messageID  uint32                    // Current messageID
-	callPool   chan call
-	running    chan bool
-	done       chan bool
-
+	
 	pendingMutex    sync.Mutex // to protect pending, messageID
 	sendingMutex    sync.Mutex
 	proceduresMutex sync.Mutex
 }
 
+// Protocol specific implementation (e.g. udp.go)
 type Connection interface {
-	// WriteTo writes a packet with payload b to addr.
-    // WriteTo can be made to time out and return
-    // an error with Timeout() == true after a fixed time limit;
-    // see SetDeadline and SetWriteDeadline.
-    // On packet-oriented connections, write timeouts are rare.
-    WriteTo(b []byte, addr net.Addr) (n int, err error)
+	// Listens for queries and replies, serving procedures registered by Register. 
+	// Returns an error if there was a failure serving or we are already serving
+	ListenAndServe() (err error) 
 
-    // Close closes the connection.
-    // Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.
-    Close() error
-    
-	// Reads the next packet from the connection and returns the buffer, bytes read and any errors
-	// This is designed so we can work with multiple protocols, without having to specify buffer sizes
-	ReadNextPacket() (packet)
+	// WriteTo writes a packet with payload b to addr.
+	WriteTo(b []byte, addr net.Addr) (n int, err error)
+
+	// Stops the server. Returns an error if the server isn't running.
+	Stop() error
 }
 
 // Creates a node that performs IO on connection
-func CreateNode(connection Connection) (*Node, error) {
+func CreateNode() (Node) {
 	node := Node{}
 
 	// Maps
@@ -91,13 +87,11 @@ func CreateNode(connection Connection) (*Node, error) {
 	node.sendingMutex = *new(sync.Mutex)
 	node.pendingMutex = *new(sync.Mutex)
 	node.proceduresMutex = *new(sync.Mutex)
-
-	// Connection
-	node.Connection = connection
+	
 	// Initialize messageID to pseudorandom value
 	node.messageID = uint32(time.Now().Nanosecond())
 
-	return &node, nil
+	return node
 }
 
 type packet struct {
@@ -106,7 +100,7 @@ type packet struct {
 	addr net.Addr
 	err error
 }
-
+/*
 // Listens for queries and replies, serving procedures registered by Register
 // Returns an error if there was a failure serving or we are already serving
 func (node *Node) ListenAndServe() (err error) {
@@ -157,17 +151,7 @@ ServeLoop:
 	node.done <- true
 	
 	return nil
-}
-
-// Stops the server. Returns an error if the server isn't running. 
-func (node *Node) Stop() error {
-	if node.running == nil {
-		return errors.New("Error - server not running")
-	}
-	node.done = make(chan bool)
-	<-node.done
-	return nil
-}
+}*/
 
 // Processes received packets
 func (node *Node) processPacket(data []byte, read int, addr net.Addr) error {
@@ -256,6 +240,8 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 
 		// Send to host
 		node.sendingMutex.Lock()
+		// TODO: Make safe from server closedown
+		// TODO: Error checking
 		node.WriteTo(message_bigEndian, addr)
 		node.sendingMutex.Unlock()
 
@@ -359,6 +345,7 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 
 	// Send to host
 	node.sendingMutex.Lock()
+	// TODO: Make safe from server closedown
 	if _, err = node.WriteTo(buf_bigEndian, addr); err != nil {
 		return err
 	}

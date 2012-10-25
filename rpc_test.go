@@ -39,11 +39,10 @@ type AddReply struct {
 }
 
 func Test_UDP(t *testing.T) {
-return
 	println("=== Running UDP Test")
-
+	
 	// Server
-	server, err := CreateNodeUDP("udp", ":50000", 512)
+	server, err := CreateNodeUDP("udp", "127.0.0.1:50000", 512)
 	if err != nil {
 		println("SERVER: Can't create server node -", err.Error())
 		t.FailNow()
@@ -53,19 +52,21 @@ return
 	add := new(AddService)
 	server.Register(add)
 	println("SERVER: Add service registered")
-
+	
 	go func() {
 		err := server.ListenAndServe()
+		
 		if err != nil {
 			println("SERVER:", "Error serving -", err.Error())
 			t.FailNow()
 		}
-	}()
+	} ()
+	
 	println("SERVER: Serving")
-	defer server.Stop()
+	//defer server.Stop()
 
 	// Client
-	client, err := CreateNodeUDP("udp", ":60000", 512)
+	client, err := CreateNodeUDP("udp", "127.0.0.1:60000", 512)
 	if err != nil {
 		println("CLIENT: Can't create client node - ", err.Error())
 		t.FailNow()
@@ -74,22 +75,23 @@ return
 	println("CLIENT: Client node created")
 	go func() {
 		err := client.ListenAndServe()
+		
 		if err != nil {
 			println("CLIENT:", "Error serving -", err.Error())
 			t.FailNow()
 		}
 	}()
+	
 	println("CLIENT: Serving")
-	client.Stop()
+	//defer client.Stop()
 
 	args := AddArgs{2, 2}
 	reply := new(AddReply)
 	println("CLIENT: Calling Add on server")
 	err = client.CallUDP("Add", "127.0.0.1:50000", args, reply, 1)
-
+	
 	if err != nil {
-		print("CLIENT: Client call error - ")
-		println(err.Error())
+		println("CLIENT: Client call error - ", err.Error())
 		t.FailNow()
 	}
 	if reply != nil {
@@ -97,12 +99,10 @@ return
 		println(reply.Result)
 	}
 	
-	
-	
 	println("UDP test succeeded!")
 	println("")
 }
-
+/*
 func Test_TCP(t *testing.T) {
 	println("=== Running TCP Test")
 
@@ -163,4 +163,4 @@ func Test_TCP(t *testing.T) {
 
 	println("TCP test succeeded!")
 	println("")
-}
+}*/
