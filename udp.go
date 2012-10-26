@@ -62,6 +62,7 @@ func CreateNodeUDP(network, addr string, mtu uint32) (*UDPNode, error) {
 // Returns an error if there was a failure serving or we are already serving
 func (node *UDPNode) ListenAndServe() (error) {
 	node.routines.Add(1)
+	defer node.conn.Close()
 	defer node.routines.Done()
 	
 	packets := make(chan packet)
@@ -76,6 +77,8 @@ func (node *UDPNode) ListenAndServe() (error) {
 				case <-receiverSignaller:
 					return
 				default:
+					// TODO: Make readNextPacket time out so this goroutine can exit
+					//		 Once this works uncomment the above node.routines code
 					packets <- node.readNextPacket() // blocking
 			}
 		}
@@ -103,8 +106,8 @@ func (node *UDPNode) ListenAndServe() (error) {
 				if packet.read > 0 {
 					// Process packet
 					go func() {
-						//node.routines.Add(1)
-						//defer node.routines.Done()
+						node.routines.Add(1)
+						defer node.routines.Done()
 						
 						err := node.processPacket(packet.buffer, packet.read, packet.addr)
 						if err != nil {
