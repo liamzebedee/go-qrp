@@ -33,8 +33,6 @@ import (
 	"reflect"
 	"sync"
 	"time"
-	"log"
-	"strings"
 )
 
 type responseChannel chan bencode.RawMessage
@@ -109,7 +107,6 @@ type packet struct {
 func (node *Node) processPacket(data []byte, read int, addr net.Addr) error {
 	data_bigEndian, err := decodeIntoBigEndian(bytes.NewBuffer(data))
 	if err != nil {
-		log.SetPrefix(strings.Join([]string{ "qrp - [", addr.String(), "]:" }, ""))
 		return err
 	}
 
