@@ -196,5 +196,10 @@ func (node *TCPNode) WriteTo(b []byte, addr net.Addr) (int, error) {
 		return 0, err
 	}
 	
+	err = writer.Flush()
+	if err != nil {
+		return 0, err
+	}
+	
 	return n, nil
 }
