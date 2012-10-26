@@ -191,6 +191,7 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		// Send to host
 		node.sendingMutex.Lock()
 		// TODO: Make safe from server closedown
+		var _ = message_bigEndian
 		if _, err := node.WriteTo(message_bigEndian, addr); err != nil {
 			return err
 		}
@@ -312,19 +313,19 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 
 	// Wait for response on channel
 	select {
-	case replydata := <-responseChan:
-		// We received a reply
-		// Decode args
-		argsReader := bytes.NewReader(replydata)
-		argsDecoder := bencode.NewDecoder(argsReader)
-		err := argsDecoder.Decode(reply)
-		if err != nil {
-			fmt.Errorf("qrp:", "Error decoding reply return data into value: %s\n", err.Error())
-			return err
-		}
-	case <-timeoutChan:
-		// We timed out
-		return new(TimeoutError)
+		case replydata := <-responseChan:
+			// We received a reply
+			// Decode args
+			argsReader := bytes.NewReader(replydata)
+			argsDecoder := bencode.NewDecoder(argsReader)
+			err := argsDecoder.Decode(reply)
+			if err != nil {
+				fmt.Errorf("qrp:", "Error decoding reply return data into value: %s\n", err.Error())
+				return err
+			}
+		case <-timeoutChan:
+			// We timed out
+			return new(TimeoutError)
 	}
 
 	return nil

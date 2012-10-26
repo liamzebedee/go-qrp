@@ -104,7 +104,7 @@ func Test_UDP(t *testing.T) {
 }
 
 func Test_TCP(t *testing.T) {
-return
+return // BUG: Eats up memory and crashes stuff :|
 	println("=== Running TCP Test")
 
 	// Server

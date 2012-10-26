@@ -25,6 +25,7 @@ import (
 	"net"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type UDPNode struct {
@@ -66,20 +67,21 @@ func (node *UDPNode) ListenAndServe() (error) {
 	defer node.routines.Done()
 	
 	packets := make(chan packet)
-	receiverSignaller := make(chan bool) // To signal the receiver goroutine to end
+	receiverSignaller := make(chan bool, 1) // To signal the receiver goroutine to end
 	
 	// A seperate receiving goroutine is required so we don't block on the readNextPacket function
 	go func() {
-		/*node.routines.Add(1)
-		defer node.routines.Done()*/
+		node.routines.Add(1)
+		defer node.routines.Done()
 		for {
 			select {
 				case <-receiverSignaller:
 					return
 				default:
-					// TODO: Make readNextPacket time out so this goroutine can exit
-					//		 Once this works uncomment the above node.routines code
-					packets <- node.readNextPacket() // blocking
+					p := node.readNextPacket()
+					if p.err == nil {
+						packets <- p
+					}
 			}
 		}
 	} ()
@@ -92,13 +94,13 @@ func (node *UDPNode) ListenAndServe() (error) {
 		select {
 			case <-node.stopServing:
 				// Signal to stop server
-				fmt.Println("qrp:", "Closing server")				
+				fmt.Println("qrp:", "Closing server")
 				receiverSignaller <- true
 				return nil
 				
 			case packet := <-packets:
 				if packet.err != nil {
-					fmt.Errorf("qrp:", "Error reading from connection - %s\n", packet.err.Error())
+					fmt.Printf("qrp:", "Error reading from connection - %s\n", packet.err.Error())
 					continue
 				}
 	
@@ -109,15 +111,16 @@ func (node *UDPNode) ListenAndServe() (error) {
 						node.routines.Add(1)
 						defer node.routines.Done()
 						
+						// TODO: processPacket can block when receiving a query and writing a reply
+						//		 make write timeout
 						err := node.processPacket(packet.buffer, packet.read, packet.addr)
 						if err != nil {
-							fmt.Errorf("qrp:", "Error processing packet - %s\n", packet.err.Error())
+							fmt.Printf("qrp:", "Error processing packet - %s\n", packet.err.Error())
 						}
 					} ()
 				}
 		}
 	}
-	
 	return nil
 }
 
@@ -125,7 +128,10 @@ func (node *UDPNode) ListenAndServe() (error) {
 // This is designed so we can work with multiple protocols, without having to specify buffer sizes	
 func (node *UDPNode) readNextPacket() (packet) {
 	buffer := make([]byte, node.mtu)
-
+	
+	// TODO: Has to be a better way to do this
+	node.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	
 	// Read a packet into the buffer
 	read, addr, err := node.conn.ReadFrom(buffer)
 
