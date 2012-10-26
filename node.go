@@ -33,6 +33,8 @@ import (
 	"reflect"
 	"sync"
 	"time"
+	"log"
+	"strings"
 )
 
 type responseChannel chan bencode.RawMessage
@@ -91,6 +93,8 @@ func CreateNode() (Node) {
 	// Initialize messageID to pseudorandom value
 	node.messageID = uint32(time.Now().Nanosecond())
 
+	//log.SetPrefix(strings.Join([]string{ "qrp - [", addr.String(), "]:" }, ""))
+	
 	return node
 }
 
@@ -100,63 +104,12 @@ type packet struct {
 	addr net.Addr
 	err error
 }
-/*
-// Listens for queries and replies, serving procedures registered by Register
-// Returns an error if there was a failure serving or we are already serving
-func (node *Node) ListenAndServe() (err error) {
-	if node.running != nil {
-		return errors.New("Already serving")
-	}
-	node.running = make(chan bool)
-	packets := make(chan packet)
-	
-	go func() {
-		for {
-			select {
-				case <-node.running:
-					return
-				default:
-					packets <- node.ReadNextPacket()
-			}
-		}
-	} ()
-
-ServeLoop:
-	for {
-		select {
-		case <-node.running:
-			// Signal to stop server
-			fmt.Println("qrp:", "Closing server")
-			node.Connection.Close()
-			
-			break ServeLoop
-		case packet := <- packets:
-			if packet.err != nil {
-				fmt.Errorf("qrp:", "Error reading from connection - %s\n", err.Error())
-			}
-
-			// If we read a packet
-			if packet.read > 0 {
-				// Process packet
-				go func() {
-					err := node.processPacket(packet.buffer, packet.read, packet.addr)
-					if err != nil {
-						fmt.Errorf("qrp:", "Error processing packet - %s\n", packet.err.Error())
-					}
-				}()
-			}
-		}
-	}
-	
-	node.done <- true
-	
-	return nil
-}*/
 
 // Processes received packets
 func (node *Node) processPacket(data []byte, read int, addr net.Addr) error {
 	data_bigEndian, err := decodeIntoBigEndian(bytes.NewBuffer(data))
 	if err != nil {
+		log.SetPrefix(strings.Join([]string{ "qrp - [", addr.String(), "]:" }, ""))
 		return err
 	}
 
@@ -277,8 +230,6 @@ func (node *Node) processReply(reply *Reply, addr net.Addr) error {
 // The ID space is unique to 2 communicating nodes
 // This is managed by maintaining a map of IDs to Calls. A call contains an IP+ID combination for the call. Only IDs that come from the same IP can be mapped to calls 
 func (node *Node) nextCall(addr net.Addr) (nextCall call) {
-	// TODO: Getting the next message ID in nextCall() might be better implemented as 
-	//       a goroutine that just writes 1..maxint on a channel and then reads from the channel.  Much less locking.
 	node.pendingMutex.Lock()
 	defer node.pendingMutex.Unlock()
 

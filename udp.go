@@ -69,14 +69,14 @@ func (node *UDPNode) ListenAndServe() (error) {
 	
 	// A seperate receiving goroutine is required so we don't block on the readNextPacket function
 	go func() {
-		node.routines.Add(1)
-		defer node.routines.Done()
+		/*node.routines.Add(1)
+		defer node.routines.Done()*/
 		for {
 			select {
 				case <-receiverSignaller:
 					return
 				default:
-					packets <- node.readNextPacket()
+					packets <- node.readNextPacket() // blocking
 			}
 		}
 	} ()
@@ -85,29 +85,32 @@ func (node *UDPNode) ListenAndServe() (error) {
 		return errors.New("Already serving")
 	} : TODO */ 
 	
-	Serving:
 	for {
 		select {
 			case <-node.stopServing:
 				// Signal to stop server
 				fmt.Println("qrp:", "Closing server")				
-				
-				break Serving
+				receiverSignaller <- true
+				return nil
 				
 			case packet := <-packets:
 				if packet.err != nil {
 					fmt.Errorf("qrp:", "Error reading from connection - %s\n", packet.err.Error())
+					continue
 				}
 	
 				// If we read a packet
 				if packet.read > 0 {
 					// Process packet
 					go func() {
+						//node.routines.Add(1)
+						//defer node.routines.Done()
+						
 						err := node.processPacket(packet.buffer, packet.read, packet.addr)
 						if err != nil {
 							fmt.Errorf("qrp:", "Error processing packet - %s\n", packet.err.Error())
 						}
-					}()
+					} ()
 				}
 		}
 	}

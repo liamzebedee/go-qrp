@@ -48,7 +48,7 @@ func Test_UDP(t *testing.T) {
 		t.FailNow()
 	}
 	println("SERVER: Server created")
-
+	
 	add := new(AddService)
 	server.Register(add)
 	println("SERVER: Add service registered")
@@ -63,7 +63,7 @@ func Test_UDP(t *testing.T) {
 	} ()
 	
 	println("SERVER: Serving")
-	//defer server.Stop()
+	defer server.Stop()
 
 	// Client
 	client, err := CreateNodeUDP("udp", "127.0.0.1:60000", 512)
@@ -83,7 +83,7 @@ func Test_UDP(t *testing.T) {
 	}()
 	
 	println("CLIENT: Serving")
-	//defer client.Stop()
+	defer client.Stop()
 
 	args := AddArgs{2, 2}
 	reply := new(AddReply)
@@ -102,8 +102,9 @@ func Test_UDP(t *testing.T) {
 	println("UDP test succeeded!")
 	println("")
 }
-/*
+
 func Test_TCP(t *testing.T) {
+return
 	println("=== Running TCP Test")
 
 	// Server
@@ -163,4 +164,4 @@ func Test_TCP(t *testing.T) {
 
 	println("TCP test succeeded!")
 	println("")
-}*/
+}
