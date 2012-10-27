@@ -76,11 +76,15 @@ On stream-based connections, QRP delimits messages by the NUL byte (0x00)
 
 Why QRP? Why not JSON-RPC?
 
-QRP is designed to be really really minimal. JSON-RPC uses the full names of properties (method 
-instead of m etc.). JSON itself is also quite a bulky encoding scheme in comparison to BEncode. 
-Another difference between JSON-RPC and QRP is the absence of an error property. Errors aren't 
-always useful for a node, so why include them?
+1. QRP is designed to be really really minimal. JSON-RPC uses the full names of properties (method 
+   instead of m etc.). JSON itself is also quite a bulky encoding scheme in comparison to BEncode. 
+   Another difference between JSON-RPC and QRP is the absence of an error property. Errors aren't 
+   always useful for a node, so why include them?
 
-QRP is also very modular in comparison to go/net/rpc. node.go contains all the functions related to
-operating a node, including processing received packets 
+2. QRP is also very modular in comparison to go/net/rpc. node.go contains all the functions related to
+   operating a node, including processing received packets and handling RPC mechanisms. Individual 
+   protocol-specific implementations (udp.go, tcp.go) are also available. 
+   
+3. QRP is scalable. UDP can easily scale many concurrent connections through a single port. 
+   TCP is organized minimally to use only 2 ports for listening and connecting. 
 */
