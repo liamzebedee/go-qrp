@@ -191,7 +191,6 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		// Send to host
 		node.sendingMutex.Lock()
 		// TODO: Make safe from server closedown
-		var _ = message_bigEndian
 		if _, err := node.WriteTo(message_bigEndian, addr); err != nil {
 			return err
 		}

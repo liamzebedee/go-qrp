@@ -39,6 +39,7 @@ type AddReply struct {
 }
 
 func Test_UDP(t *testing.T) {
+return
 	println("=== Running UDP Test")
 	
 	// Server
@@ -104,7 +105,7 @@ func Test_UDP(t *testing.T) {
 }
 
 func Test_TCP(t *testing.T) {
-return // BUG: Eats up memory and crashes stuff :|
+//return // BUG: Eats up memory and crashes stuff :|
 	println("=== Running TCP Test")
 
 	// Server
@@ -150,7 +151,7 @@ return // BUG: Eats up memory and crashes stuff :|
 	args := AddArgs{2, 2}
 	reply := new(AddReply)
 	println("CLIENT: Calling Add on server")
-	err = client.CallTCP("Add", "127.0.0.1:50000", args, reply, 4)
+	err = client.CallTCP("Add", "127.0.0.1:50000", args, reply, 3)
 
 	if err != nil {
 		print("CLIENT: Client call error - ")

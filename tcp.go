@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"bufio"
 	"io"
+	"time"
 )
 
 type TCPNode struct {
@@ -42,8 +43,6 @@ type TCPNode struct {
 	listener *net.TCPListener
 	connectAddr *net.TCPAddr // Address by which we connect to other nodes
 	activeConnections map[string] net.Conn
-	
-	packetQueue chan packet
 	
 	listenRoutine chan bool
 	handleConnRoutine chan bool
@@ -69,8 +68,7 @@ func CreateNodeTCP(network, listenAddrStr, connectAddrStr string) (*TCPNode, err
 	node := TCPNode { }
 	node.listener = tcpListener
 	node.connectAddr = connectAddr
-	node.listenRoutine = make(chan bool)
-	node.packetQueue = make(chan packet)
+	node.listenRoutine, node.handleConnRoutine = make(chan bool), make(chan bool, 42)
 	node.activeConnections = make(map[string] net.Conn)
 	node.Node = CreateNode()
 	node.Node.Connection = &node
@@ -81,21 +79,42 @@ func CreateNodeTCP(network, listenAddrStr, connectAddrStr string) (*TCPNode, err
 // Listens for connections, and instantiates a new goroutine for each Accept
 func (node *TCPNode) ListenAndServe() (error) {
 	node.routines.Add(1)
+	defer node.listener.Close()
 	defer node.routines.Done()
+	
+	conns := make(chan net.Conn, 1)
+	receiveSignaller := make(chan bool)
+	
+	go func() {
+		node.routines.Add(1)
+		defer node.routines.Done()
+		
+		for {
+			select {
+				case <-receiveSignaller:
+					return
+				default:
+					// TODO: Has to be a better way to do this
+					node.listener.SetDeadline(time.Now().Add(2 * time.Second))
+					conn, err := node.listener.Accept()
+					if err != nil {
+						// Not much can be done
+						fmt.Printf("qrp: connection not accepted - %s\n", err.Error())
+						continue
+					} else {
+						conns <- conn
+					}
+			}
+		}
+	} ()
 	
 	for {
 		select {
 			case <-node.listenRoutine:
-				node.listener.Close()
+				receiveSignaller <- true
 				return nil
 			default:
-				conn, err := node.listener.Accept()
-				if err != nil {
-					// Not much can be done
-					fmt.Printf("qrp: connection not accepted - %s\n", err.Error())
-				} else {
-					go node.handleConnection(conn)
-				}
+				go node.handleConnection(<-conns)
 		}
 	}
 	
@@ -104,11 +123,15 @@ func (node *TCPNode) ListenAndServe() (error) {
 
 func (node *TCPNode) handleConnection(conn net.Conn) {
 	node.routines.Add(1)
+	defer conn.Close()
 	defer node.routines.Done()
 	
 	// Store connection
 	node.activeConnections[conn.RemoteAddr().String()] = conn
 	reader := bufio.NewReader(conn)
+	
+	// TODO: Has to be a better way to do this
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	
 	// Read next message
 	for {
@@ -137,12 +160,6 @@ func (node *TCPNode) handleConnection(conn net.Conn) {
 				}
 		}
 	}
-	
-	conn.Close()
-}
-
-func (node *TCPNode) ReadNextPacket() (packet) {
-	return <-node.packetQueue
 }
 
 func (node *TCPNode) Close() error {
@@ -150,7 +167,9 @@ func (node *TCPNode) Close() error {
 	node.listenRoutine <- true
 	
 	// Signal all connection goroutines to close
-	node.handleConnRoutine <- true
+	for _, _ = range node.activeConnections {
+		node.handleConnRoutine <- true
+	}
 	
 	// Wait for goroutines to close
 	node.routines.Wait()
@@ -169,7 +188,7 @@ func (node *TCPNode) CallTCP(procedure string, addrString string, args interface
 	return node.Call(procedure, addr, args, reply, timeout)
 }
 
-func (node *TCPNode) WriteTo(b []byte, addr net.Addr) (int, error) {	
+func (node *TCPNode) WriteTo(b []byte, addr net.Addr) (int, error) {
 	tcpConn := node.activeConnections[addr.String()]
 	
 	// First time we are connecting
@@ -183,12 +202,16 @@ func (node *TCPNode) WriteTo(b []byte, addr net.Addr) (int, error) {
 		
 		tcpConn, err := net.DialTCP(addr.Network(), node.connectAddr, addrConnectTo)
 		if err != nil {
-			fmt.Errorf("qrp:", "error writing to connection -", err.Error())
+			fmt.Printf("qrp:", "error writing to connection -", err.Error())
 			return 0, err
 		}
 		
 		go node.handleConnection(tcpConn)
 	}
+	
+	// TODO: Has to be a better way to do this
+	tcpConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	
 	writer := bufio.NewWriter(tcpConn)
 	
 	n, err := writer.Write(append(b, 0x00))
