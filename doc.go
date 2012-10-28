@@ -32,20 +32,20 @@ Nodes serve procedures. Procedures are installed using the Register function, wh
 registers the exported methods of that object.
 
  	type AddService struct {}
- 	
+
  	type AddArgs struct {
 		A, B int32
 	}
 	type AddReply struct {
 		Result int32
 	}
-	
+
 	func (s *AddService) Add(args *AddArgs, reply *AddReply) {
 		reply.Result = args.A + args.B
 	}
 
 	node.Register(AddService{})
-	
+
 
 For more infomation on how to use QRP, see rpc_test.go. Most of this library follows the same standards in go/net/rpc.
 
@@ -84,7 +84,7 @@ Why QRP? Why not JSON-RPC?
 2. QRP is also very modular in comparison to go/net/rpc. node.go contains all the functions related to
    operating a node, including processing received packets and handling RPC mechanisms. Individual 
    protocol-specific implementations (udp.go, tcp.go) are also available. 
-   
+
 3. QRP is scalable. UDP can easily scale many concurrent connections through a single port. 
    TCP is organized minimally to use only 2 ports for listening and connecting. 
 */

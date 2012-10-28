@@ -23,206 +23,173 @@ package qrp
 
 // Implementation details:
 // - Frames are delimited by the NUL byte (0x00)
-// - There is always a single goroutine running - the connection listener. 
-// - The connection listener spawns goroutines for every connection, where packets are read and sent to the packetQueue
-// - ReadNextPacket returns packets from the packetQueue
+// - There is always a single goroutine running - the connection listener.
+// - The connection listener spawns a new goroutine for each connection
+// - Upon shutdown, all existing packets being processed are waited for completion, to prevent corruption
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"net"
 	"sync"
-	"fmt"
-	"bufio"
-	"io"
 	"time"
 )
 
 type TCPNode struct {
+	// Net
+	listenAddr         *net.TCPAddr
+	connectAddr        *net.TCPAddr
+	activeConnections  map[string]*tcpConn
+	_activeConnections *sync.Mutex
+
+	// Sync
+	routines             sync.WaitGroup
+	listenRoutine_signal chan bool
+
+	// QRP
 	Node
-	
-	routines sync.WaitGroup
-	listener *net.TCPListener
-	connectAddr *net.TCPAddr // Address by which we connect to other nodes
-	activeConnections map[string] net.Conn
-	
-	listenRoutine chan bool
-	handleConnRoutine chan bool
 }
 
-// Creates a TCP node, returning an error if failure
+type tcpConn struct {
+	conn           *net.TCPConn
+	routine_signal chan bool
+	routines       sync.WaitGroup
+}
+
 func CreateNodeTCP(network, listenAddrStr, connectAddrStr string) (*TCPNode, error) {
+	// Setup listener
 	listenAddr, err := net.ResolveTCPAddr(network, listenAddrStr)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	connectAddr, err := net.ResolveTCPAddr(network, connectAddrStr)
 	if err != nil {
 		return nil, err
 	}
-	
-	tcpListener, err := net.ListenTCP(network, listenAddr)
-	if err != nil {
-		return nil, err
+
+	// Setup node
+	node := CreateNode()
+
+	// Create TCP node
+	tcpNode := TCPNode{
+		listenAddr:         listenAddr,
+		connectAddr:        connectAddr,
+		activeConnections:  make(map[string]*tcpConn),
+		_activeConnections: new(sync.Mutex),
+
+		listenRoutine_signal: make(chan bool, 1),
+
+		Node: node,
 	}
-	
-	node := TCPNode { }
-	node.listener = tcpListener
-	node.connectAddr = connectAddr
-	node.listenRoutine, node.handleConnRoutine = make(chan bool), make(chan bool, 42)
-	node.activeConnections = make(map[string] net.Conn)
-	node.Node = CreateNode()
-	node.Node.Connection = &node
-	
-	return &node, nil
+	node.Connection = &tcpNode
+
+	return &tcpNode, nil
 }
 
-// Listens for connections, and instantiates a new goroutine for each Accept
-func (node *TCPNode) ListenAndServe() (error) {
+func (node *TCPNode) ListenAndServe() error {
+	// Sync
 	node.routines.Add(1)
-	defer node.listener.Close()
 	defer node.routines.Done()
-	
-	conns := make(chan net.Conn, 1)
-	receiveSignaller := make(chan bool)
-	
-	go func() {
-		node.routines.Add(1)
-		defer node.routines.Done()
-		
-		for {
-			select {
-				case <-receiveSignaller:
-					return
-				default:
-					// TODO: Has to be a better way to do this
-					node.listener.SetDeadline(time.Now().Add(2 * time.Second))
-					conn, err := node.listener.Accept()
-					if err != nil {
-						// Not much can be done
-						fmt.Printf("qrp: connection not accepted - %s\n", err.Error())
-						continue
-					} else {
-						conns <- conn
-					}
-			}
-		}
-	} ()
-	
-	for {
-		select {
-			case <-node.listenRoutine:
-				receiveSignaller <- true
-				return nil
-			default:
-				go node.handleConnection(<-conns)
-		}
-	}
-	
-	return nil
-}
 
-func (node *TCPNode) handleConnection(conn net.Conn) {
-	node.routines.Add(1)
-	defer conn.Close()
-	defer node.routines.Done()
-	
-	// Store connection
-	node.activeConnections[conn.RemoteAddr().String()] = conn
-	reader := bufio.NewReader(conn)
-	
-	// TODO: Has to be a better way to do this
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	
-	// Read next message
-	for {
-		select {
-			case <-node.handleConnRoutine:
-				return
-				
-			default:
-				// Read from stream until NUL byte
-				buffer, err := reader.ReadBytes(0)
-				read := len(buffer)
-				
-				if err == io.EOF && read == 0 {
-					// No packet, no cry
-					continue
-					
-				} else if err != nil {
-					// Close conn, bad packet format
-					fmt.Printf("qrp: Closing connection of %s - Bad packet format\n")
-					return
-					
-				} else {
-					fmt.Printf("Packet received from %s\n", conn.RemoteAddr().String())
-				
-					go node.processPacket(buffer, read, conn.RemoteAddr())
-				}
-		}
-	}
-}
-
-func (node *TCPNode) Close() error {
-	// Signal listen goroutine to close
-	node.listenRoutine <- true
-	
-	// Signal all connection goroutines to close
-	for _, _ = range node.activeConnections {
-		node.handleConnRoutine <- true
-	}
-	
-	// Wait for goroutines to close
-	node.routines.Wait()
-	
-	return nil
-}
-
-// Calls a procedure on a node using the TCP protocol. 
-// See Node.Call
-func (node *TCPNode) CallTCP(procedure string, addrString string, args interface{}, reply interface{}, timeout int) (err error) {
-	addr, err := net.ResolveTCPAddr("tcp", addrString)
+	// Setup listener
+	listener, err := net.ListenTCP(node.listenAddr.Network(), node.listenAddr)
 	if err != nil {
 		return err
 	}
+	listener.SetDeadline(time.Now().Add(2 * time.Second))
+	defer listener.Close()
 
-	return node.Call(procedure, addr, args, reply, timeout)
+	for {
+		select {
+		case <-node.listenRoutine_signal:
+			return nil
+		default:
+			listener.SetDeadline(time.Now().Add(2 * time.Second))
+			conn, err := listener.AcceptTCP()
+			if err != nil {
+				// Ain't nobody got time for that
+				fmt.Printf("Ain't nobody got time for that")
+				continue
+			}
+			go node.handleConnection(conn)
+		}
+	}
+
+	return nil
 }
 
-func (node *TCPNode) WriteTo(b []byte, addr net.Addr) (int, error) {
-	tcpConn := node.activeConnections[addr.String()]
-	
-	// First time we are connecting
-	if tcpConn == nil {
-		addrConnectTo, err := net.ResolveTCPAddr("tcp", addr.String())
-		if err != nil {
-			return 0, err
+// Closes a connection to a specific node
+func (node *TCPNode) CloseConn(addrStr string) {
+	node._activeConnections.Lock()
+	node.activeConnections[addrStr].routine_signal <- true
+	node._activeConnections.Unlock()
+}
+
+func (node *TCPNode) handleConnection(conn *net.TCPConn) {
+	node.routines.Add(1)
+	defer node.routines.Done()
+	defer conn.Close()
+
+	node._activeConnections.Lock()
+	tcpConn := tcpConn{
+		conn:           conn,
+		routine_signal: make(chan bool),
+	}
+	node.activeConnections[conn.RemoteAddr().String()] = &tcpConn
+	node._activeConnections.Unlock()
+
+	// Setup buffered reader
+	reader := bufio.NewReader(conn)
+
+	for {
+		select {
+		case <-tcpConn.routine_signal:
+			return
+		default:
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+			// Frames are delimited by a NUL byte, so we read up until this
+			data, err := reader.ReadBytes(0x00)
+
+			if err == io.EOF {
+				continue
+
+			} else if err != nil {
+				// Bad packet, doesn't end in NUL
+				fmt.Printf("qrp: Closing connection from %s - bad packet format", conn.RemoteAddr().String())
+				return
+
+			} else {
+				// Process packet
+				go func() {
+					tcpConn.routines.Add(1)
+					defer tcpConn.routines.Done()
+					node.Node.processPacket(data, len(data), conn.RemoteAddr())
+				}()
+
+			}
 		}
-		
-		fmt.Printf("%s connecting to %s\n", node.connectAddr.String(), addrConnectTo.String())
-		
-		tcpConn, err := net.DialTCP(addr.Network(), node.connectAddr, addrConnectTo)
-		if err != nil {
-			fmt.Printf("qrp:", "error writing to connection -", err.Error())
-			return 0, err
-		}
-		
-		go node.handleConnection(tcpConn)
 	}
-	
-	// TODO: Has to be a better way to do this
-	tcpConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	
-	writer := bufio.NewWriter(tcpConn)
-	
-	n, err := writer.Write(append(b, 0x00))
-	if err != nil {
-		return 0, err
+
+	tcpConn.routines.Wait()
+}
+
+func (node *TCPNode) Stop() error {
+	node.listenRoutine_signal <- true
+	fmt.Println("qrp: Signalled listen routine to close")
+
+	fmt.Println("qrp: Signalling all active connections to close")
+	node._activeConnections.Lock()
+	for _, conn := range node.activeConnections {
+		conn.routine_signal <- true
 	}
-	
-	err = writer.Flush()
-	if err != nil {
-		return 0, err
-	}
-	
-	return n, nil
+	node._activeConnections.Unlock()
+
+	// Now, we wait
+	fmt.Println("qrp: Waiting for everything to finish up")
+	node.routines.Wait()
+
+	return nil
 }

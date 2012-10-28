@@ -56,7 +56,7 @@ type Node struct {
 	procedures map[string]*procedure     // Registered procedures on the node
 	pending    map[call]*responseChannel // A map of calls to queries pending responses
 	messageID  uint32                    // Current messageID
-	
+
 	pendingMutex    sync.Mutex // to protect pending, messageID
 	sendingMutex    sync.Mutex
 	proceduresMutex sync.Mutex
@@ -66,7 +66,7 @@ type Node struct {
 type Connection interface {
 	// Listens for queries and replies, serving procedures registered by Register. 
 	// Returns an error if there was a failure serving or we are already serving
-	ListenAndServe() (err error) 
+	ListenAndServe() (err error)
 
 	// WriteTo writes a packet with payload b to addr.
 	WriteTo(b []byte, addr net.Addr) (n int, err error)
@@ -76,7 +76,7 @@ type Connection interface {
 }
 
 // Creates a node that performs IO on connection
-func CreateNode() (Node) {
+func CreateNode() Node {
 	node := Node{}
 
 	// Maps
@@ -87,20 +87,20 @@ func CreateNode() (Node) {
 	node.sendingMutex = *new(sync.Mutex)
 	node.pendingMutex = *new(sync.Mutex)
 	node.proceduresMutex = *new(sync.Mutex)
-	
+
 	// Initialize messageID to pseudorandom value
 	node.messageID = uint32(time.Now().Nanosecond())
 
 	//log.SetPrefix(strings.Join([]string{ "qrp - [", addr.String(), "]:" }, ""))
-	
+
 	return node
 }
 
 type packet struct {
 	buffer []byte
-	read int
-	addr net.Addr
-	err error
+	read   int
+	addr   net.Addr
+	err    error
 }
 
 // Processes received packets
@@ -151,7 +151,7 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		argsDecoder := bencode.NewDecoder(argsReader)
 		err := argsDecoder.Decode(argValue.Interface())
 		if err != nil {
-			fmt.Errorf("qrp:", "Error decoding procedure data into value: %s\n", err.Error())
+			fmt.Printf("qrp: Error decoding procedure data into value: %s\n", err.Error())
 			return err
 		}
 
@@ -166,7 +166,7 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		reply.ReturnData, err = encodeIntoBigEndian(argsBuf)
 
 		if err != nil {
-			fmt.Errorf("qrp:", "Error encoding reply return data: %s\n", err.Error())
+			fmt.Printf("qrp: Error encoding reply return data: %s\n", err.Error())
 			return err
 		}
 
@@ -178,13 +178,13 @@ func (node *Node) processQuery(query *Query, addr net.Addr) error {
 		messageEncoder := bencode.NewEncoder(messageBuf)
 		err = messageEncoder.Encode(message)
 		if err != nil {
-			fmt.Errorf("qrp:", "Error encoding reply message into BEncode: %s\n", err.Error())
+			fmt.Printf("qrp: Error encoding reply message into BEncode: %s\n", err.Error())
 			return err
 		}
 
 		message_bigEndian, err := encodeIntoBigEndian(messageBuf)
 		if err != nil {
-			fmt.Errorf("qrp:", "Error encoding reply message into BigEndian: %s\n", err.Error())
+			fmt.Printf("qrp: Error encoding reply message into BigEndian: %s\n", err.Error())
 			return err
 		}
 
@@ -267,13 +267,13 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 	buf := new(bytes.Buffer)
 	bencodeE := bencode.NewEncoder(buf)
 	if err := bencodeE.Encode(message); err != nil {
-		fmt.Errorf("qrp:", "Error encoding query message into BEncode: %s\n", err.Error())
+		fmt.Printf("qrp: Error encoding query message into BEncode: %s\n", err.Error())
 		return err
 	}
 
 	buf_bigEndian, err := encodeIntoBigEndian(buf)
 	if err != nil {
-		fmt.Errorf("qrp:", "Error encoding query message into BigEndian: %s\n", err.Error())
+		fmt.Printf("qrp: Error encoding query message into BigEndian: %s\n", err.Error())
 		return err
 	}
 
@@ -299,7 +299,7 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 		return err
 	}
 	node.sendingMutex.Unlock()
-	
+
 	// If timeout isn't 0, initate the timeout function concurrently
 	timeoutChan := make(chan bool, 1)
 	if timeout > 0 {
@@ -312,19 +312,19 @@ func (node *Node) Call(procedure string, addr net.Addr, args interface{}, reply 
 
 	// Wait for response on channel
 	select {
-		case replydata := <-responseChan:
-			// We received a reply
-			// Decode args
-			argsReader := bytes.NewReader(replydata)
-			argsDecoder := bencode.NewDecoder(argsReader)
-			err := argsDecoder.Decode(reply)
-			if err != nil {
-				fmt.Errorf("qrp:", "Error decoding reply return data into value: %s\n", err.Error())
-				return err
-			}
-		case <-timeoutChan:
-			// We timed out
-			return new(TimeoutError)
+	case replydata := <-responseChan:
+		// We received a reply
+		// Decode args
+		argsReader := bytes.NewReader(replydata)
+		argsDecoder := bencode.NewDecoder(argsReader)
+		err := argsDecoder.Decode(reply)
+		if err != nil {
+			fmt.Printf("qrp: Error decoding reply return data into value: %s\n", err.Error())
+			return err
+		}
+	case <-timeoutChan:
+		// We timed out
+		return new(TimeoutError)
 	}
 
 	return nil
@@ -366,7 +366,7 @@ func (node *Node) register(receiver interface{}) error {
 		// TODO: Maybe replace the error handling with something more friendly?
 		var errorBuf bytes.Buffer
 		throwError := func() error {
-			fmt.Errorf(errorBuf.String())
+			fmt.Printf(errorBuf.String())
 			return errors.New(errorBuf.String())
 		}
 

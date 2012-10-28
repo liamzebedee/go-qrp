@@ -22,8 +22,8 @@ package qrp
 // UDP connection implementation
 
 import (
-	"net"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 )
@@ -31,10 +31,10 @@ import (
 type UDPNode struct {
 	Node
 	conn net.UDPConn
-	mtu uint32
-	
+	mtu  uint32
+
 	stopServing chan bool
-	routines sync.WaitGroup
+	routines    sync.WaitGroup
 }
 
 // Creates a node that communicates over UDP. mtu specifies the maximum transmission unit,
@@ -52,73 +52,73 @@ func CreateNodeUDP(network, addr string, mtu uint32) (*UDPNode, error) {
 	}
 
 	node := CreateNode()
-	udpNode := UDPNode{ Node: node, conn: *conn, mtu: mtu }
+	udpNode := UDPNode{Node: node, conn: *conn, mtu: mtu}
 	udpNode.stopServing = make(chan bool)
 	udpNode.Node.Connection = &udpNode
-	
+
 	return &udpNode, nil
 }
 
 // Listens for queries and replies, serving procedures registered by Register
 // Returns an error if there was a failure serving or we are already serving
-func (node *UDPNode) ListenAndServe() (error) {
+func (node *UDPNode) ListenAndServe() error {
 	node.routines.Add(1)
 	defer node.conn.Close()
 	defer node.routines.Done()
-	
+
 	packets := make(chan packet)
 	receiverSignaller := make(chan bool, 1) // To signal the receiver goroutine to end
-	
+
 	// A seperate receiving goroutine is required so we don't block on the readNextPacket function
 	go func() {
 		node.routines.Add(1)
 		defer node.routines.Done()
 		for {
 			select {
-				case <-receiverSignaller:
-					return
-				default:
-					p := node.readNextPacket()
-					if p.err == nil {
-						packets <- p
-					}
+			case <-receiverSignaller:
+				return
+			default:
+				p := node.readNextPacket()
+				if p.err == nil {
+					packets <- p
+				}
 			}
 		}
-	} ()
-	
+	}()
+
 	/*if node.routines != nil {
 		return errors.New("Already serving")
-	} : TODO */ 
-	
+	} : TODO */
+
 	for {
 		select {
-			case <-node.stopServing:
-				// Signal to stop server
-				fmt.Println("qrp:", "Closing server")
-				receiverSignaller <- true
-				return nil
-				
-			case packet := <-packets:
-				if packet.err != nil {
-					fmt.Printf("qrp:", "Error reading from connection - %s\n", packet.err.Error())
-					continue
-				}
-	
-				// If we read a packet
-				if packet.read > 0 {
-					// Process packet
-					go func() {
-						node.routines.Add(1)
-						defer node.routines.Done()
-						
-						// TODO: processPacket can block when receiving a query and writing a reply
-						//		 make write timeout
-						err := node.processPacket(packet.buffer, packet.read, packet.addr)
-						if err != nil {
-							fmt.Printf("qrp:", "Error processing packet - %s\n", packet.err.Error())
-						}
-					} ()
-				}
+		case <-node.stopServing:
+			// Signal to stop server
+			fmt.Println("qrp:", "Closing server")
+			receiverSignaller <- true
+			return nil
+
+		case packet := <-packets:
+			if packet.err != nil {
+				fmt.Printf("qrp: Error reading from connection - %s\n", packet.err.Error())
+				continue
+			}
+
+			// If we read a packet
+			if packet.read > 0 {
+				// Process packet
+				go func() {
+					node.routines.Add(1)
+					defer node.routines.Done()
+
+					// TODO: processPacket can block when receiving a query and writing a reply
+					//		 make write timeout
+					err := node.processPacket(packet.buffer, packet.read, packet.addr)
+					if err != nil {
+						fmt.Printf("qrp: Error processing packet - %s\n", packet.err.Error())
+					}
+				}()
+			}
 		}
 	}
 	return nil
@@ -126,16 +126,16 @@ func (node *UDPNode) ListenAndServe() (error) {
 
 // Reads the next packet from the connection and returns the buffer, bytes read and any errors
 // This is designed so we can work with multiple protocols, without having to specify buffer sizes	
-func (node *UDPNode) readNextPacket() (packet) {
+func (node *UDPNode) readNextPacket() packet {
 	buffer := make([]byte, node.mtu)
-	
+
 	// TODO: Has to be a better way to do this
 	node.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	
+
 	// Read a packet into the buffer
 	read, addr, err := node.conn.ReadFrom(buffer)
 
-	return packet{ buffer, read, addr, err }
+	return packet{buffer, read, addr, err}
 }
 
 func (node *UDPNode) WriteTo(b []byte, addr net.Addr) (n int, err error) {
@@ -153,11 +153,11 @@ func (node *UDPNode) CallUDP(procedure string, addrString string, args interface
 	return node.Call(procedure, addr, args, reply, timeout)
 }
 
-func (node *UDPNode) Stop() (error) {
+func (node *UDPNode) Stop() error {
 	// Signal server to stop
 	node.stopServing <- true
-	
+
 	node.routines.Wait()
-	
+
 	return nil
 }
